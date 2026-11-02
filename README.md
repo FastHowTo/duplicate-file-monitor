@@ -28,8 +28,6 @@ DFM inventories selected directories, identifies SHA-256-confirmed duplicate fil
 sudo docker compose up -d
 ```
 
-**Registry access:** While the GHCR package is private, Docker must be authenticated to pull it. To test a truly unauthenticated Compose-only install, make the *container package* public in GitHub Packages after reviewing its exposure; the GitHub source repository can remain private. A pushed workflow is not proof that the image has been successfully built—check GitHub Actions and Packages first.
-
 The dashboard footer checks the latest **published, non-prerelease GitHub Release** periodically and provides an update link when a newer release exists. Private releases are not visible to the unauthenticated browser check; it fails silently and never auto-updates.
 
 Browse `http://your-docker-host:18080`. Allow the initial Full Scan to establish an inventory before relying on Quick Scan results.
