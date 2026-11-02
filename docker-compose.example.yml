@@ -1,0 +1,17 @@
+services:
+  duplicate-file-monitor:
+    build: .
+    container_name: duplicate-file-monitor
+    restart: unless-stopped
+    ports:
+      - "18080:8080"
+    environment:
+      DB_PATH: /data/inventory.sqlite3
+      SCAN_ROOTS: /scan/example
+      HTTP_PORT: "8080"
+    volumes:
+      - dfm-data:/data
+      # Change the left-hand side to an EXISTING mounted directory on your host.
+      - /path/to/your/mounted/files:/scan/example:ro
+volumes:
+  dfm-data:
