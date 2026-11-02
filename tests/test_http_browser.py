@@ -65,7 +65,7 @@ def wait_scan(base, n=1):
 
 def test_http_startup_readonly_status_and_schedules(running):
     base,roots,db=running
-    assert request(base,'/api/startup')[1]['version']=='0.6.2'
+    assert request(base,'/api/startup')[1]['version']=='0.6.3'
     status=request(base,'/api/status')[1]
     assert status['files']==9 and status['duplicates']==3
     assert status['quick_available']
