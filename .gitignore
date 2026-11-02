@@ -1,11 +1,7 @@
-# Python and test artifacts
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
-venv/
-
-# Secrets and local configuration
 .env
 .env.*
 !.env.example
@@ -16,15 +12,11 @@ venv/
 *.sqlite3-*
 *.pem
 *.key
-
-# Runtime data and backups
 /data/
 data/
 backups/
 *.bak
 *.tar.gz
-
-# OS and editors
 .DS_Store
 .vscode/
 .idea/
