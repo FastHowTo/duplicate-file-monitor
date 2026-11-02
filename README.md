@@ -1,6 +1,6 @@
 # Duplicate File Monitor (DFM)
 
-**Version 0.6.2** — A read-only, Docker-hosted duplicate-file and duplicate-directory inventory tool for network storage.
+**Version 0.6.3** — A read-only, Docker-hosted duplicate-file and duplicate-directory inventory tool for network storage.
 
 DFM inventories selected directories, identifies SHA-256-confirmed duplicate files, analyzes identical directory trees, and estimates redundant logical storage. **It never deletes, renames, moves, or alters source files.** Cleanup is a separate, manual administrator decision.
 
@@ -20,13 +20,17 @@ DFM inventories selected directories, identifies SHA-256-confirmed duplicate fil
 ## Install with Docker Compose
 
 1. Mount the storage you want to scan on the Docker host first.
-2. Copy `docker-compose.example.yml` to `docker-compose.yml`.
+2. Copy `docker-compose.example.yml` to `docker-compose.yml`. The example uses the published image `ghcr.io/fasthowto/duplicate-file-monitor:0.6.3` (no local build required).
 3. Change `/path/to/your/mounted/files` to the actual host mount path; add more **read-only** mounts and colon-delimited `SCAN_ROOTS` paths as needed.
 4. Start DFM:
 
 ```sh
-sudo docker compose up -d --build
+sudo docker compose up -d
 ```
+
+**Registry access:** While the GHCR package is private, Docker must be authenticated to pull it. To test a truly unauthenticated Compose-only install, make the *container package* public in GitHub Packages after reviewing its exposure; the GitHub source repository can remain private. A pushed workflow is not proof that the image has been successfully built—check GitHub Actions and Packages first.
+
+The dashboard footer checks the latest **published, non-prerelease GitHub Release** periodically and provides an update link when a newer release exists. Private releases are not visible to the unauthenticated browser check; it fails silently and never auto-updates.
 
 Browse `http://your-docker-host:18080`. Allow the initial Full Scan to establish an inventory before relying on Quick Scan results.
 
