@@ -1,6 +1,6 @@
 services:
   duplicate-file-monitor:
-    build: .
+    image: ghcr.io/fasthowto/duplicate-file-monitor:0.6.3
     container_name: duplicate-file-monitor
     restart: unless-stopped
     ports:
