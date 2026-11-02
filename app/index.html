@@ -151,7 +151,7 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 <p class="muted tiny">All schedules are disabled unless explicitly enabled. Quick Scan requires a valid Full Scan baseline. Only one scan job runs at a time; simultaneous jobs are skipped or deferred as configured.</p>
 <div id="schedule-list"></div><div class="manage-row"><button class="secondary" id="schedule-add">Add schedule</button><button id="schedules-save">Apply Schedules</button><span id="schedules-feedback" class="muted tiny" role="status"></span></div>
 </section></main>
-<footer class="muted tiny" style="text-align:center;padding:16px 24px;border-top:1px solid #2a3950">Duplicate File Monitor <span id="version">version loading…</span></footer>
+<footer class="muted tiny" style="text-align:center;padding:16px 24px;border-top:1px solid #2a3950">Duplicate File Monitor <span id="version">version loading…</span><span id="update-announcement" hidden> · <a id="update-link" target="_blank" rel="noopener noreferrer" href="https://github.com/FastHowTo/duplicate-file-monitor/releases">Update available</a></span></footer>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
@@ -165,7 +165,33 @@ const post=(path,obj)=>api(path,{method:'POST',headers:{'Content-Type':'applicat
 function message(text,bad=false){$('message').textContent=text;$('message').className=bad?'error':'ok'}
 // This value belongs to the HTML/JS currently loaded in the browser, not the
 // footer's server-supplied version. Detect deployments while polling.
-const LOADED_UI_VERSION = '0.6.2';
+const LOADED_UI_VERSION = '0.6.3';
+const RELEASES_API = 'https://api.github.com/repos/FastHowTo/duplicate-file-monitor/releases/latest';
+function versionParts(value){
+  const match=String(value||'').trim().match(/^v?(\d+)\.(\d+)\.(\d+)$/i);
+  return match?match.slice(1).map(Number):null;
+}
+function isNewerRelease(latest,installed){
+  const a=versionParts(latest),b=versionParts(installed);
+  if(!a||!b)return false;
+  for(let i=0;i<3;i++){if(a[i]>b[i])return true;if(a[i]<b[i])return false}
+  return false;
+}
+async function checkLatestRelease(){
+  try{
+    const response=await fetch(RELEASES_API,{headers:{Accept:'application/vnd.github+json'},cache:'no-store'});
+    if(!response.ok)return; // Private repositories and unavailable GitHub APIs are not update signals.
+    const release=await response.json();
+    if(release.draft||release.prerelease||!isNewerRelease(release.tag_name,LOADED_UI_VERSION))return;
+    const link=$('update-link'), notice=$('update-announcement');
+    if(!link||!notice)return;
+    link.textContent='Update available: '+release.tag_name;
+    if(typeof release.html_url==='string'&&release.html_url.startsWith('https://github.com/FastHowTo/duplicate-file-monitor/releases/'))link.href=release.html_url;
+    notice.hidden=false;
+  }catch{} // Updates are advisory; offline installations remain fully usable.
+}
+setTimeout(checkLatestRelease,3000);
+setInterval(checkLatestRelease,6*60*60*1000);
 function reloadOnDeployment(serverVersion){
   if(!serverVersion || serverVersion === LOADED_UI_VERSION)return false;
   // Retry at most once per target version in this tab to avoid reload loops
