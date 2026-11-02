@@ -1,0 +1,27 @@
+name: Import prepared DFM source
+on:
+  push:
+    paths:
+      - 'source-bundle/manifest'
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Restore the reviewed v0.6.2 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat source-bundle/parts/part* | base64 --decode > /tmp/dfm-source.txz
+          echo '209c7f33ff04dd8351c90c0ba1a0ee4bbe9bc2206b485db8eb4ada3cb8f41c2c  /tmp/dfm-source.txz' | sha256sum --check
+          tar -xJf /tmp/dfm-source.txz
+          rm -rf source-bundle
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Publish reviewed DFM v0.6.2 source'
+          git push origin HEAD:main
