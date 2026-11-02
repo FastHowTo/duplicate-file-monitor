@@ -28,7 +28,7 @@ DFM inventories selected directories, identifies SHA-256-confirmed duplicate fil
 sudo docker compose up -d
 ```
 
-The dashboard footer checks the latest **published, non-prerelease GitHub Release** periodically and provides an update link when a newer release exists. Private releases are not visible to the unauthenticated browser check; it fails silently and never auto-updates.
+The dashboard footer checks the latest **published, non-prerelease GitHub Release** periodically and provides an update link when a newer release exists. It never installs updates automatically.
 
 Browse `http://your-docker-host:18080`. Allow the initial Full Scan to establish an inventory before relying on Quick Scan results.
 
