@@ -119,7 +119,7 @@ def test_authentication_and_csrf_block_unauthorized_api(running):
 
 def test_http_startup_readonly_status_and_schedules(running):
     base,roots,db=running
-    assert request(base,'/api/startup')[1]['version']=='0.6.4'
+    assert request(base,'/api/startup')[1]['version']=='0.6.5'
     status=request(base,'/api/status')[1]
     assert status['files']==9 and status['duplicates']==3
     assert status['quick_available']

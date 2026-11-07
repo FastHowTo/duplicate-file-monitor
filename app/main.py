@@ -27,7 +27,8 @@ from schedule_engine import (get_schedules, save_schedules, update_run,
 from scanner import (ScanControl, archive_volume, connect, current_metrics,
                      effective_roots, read_meta, report, restore_volume, scan,
                      write_meta, initialize_database, FINGERPRINT_PROFILE,
-                     quick_baseline_available, read_scan_report)
+                     quick_baseline_available, read_scan_report, reconstruct_legacy_scan_report,
+                     list_scan_duplicate_groups)
 
 DB = os.getenv('DB_PATH', '/data/inventory.sqlite3')
 ROOTS = [r for r in os.getenv('SCAN_ROOTS', '/scan').split(':') if r]
@@ -442,17 +443,37 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(204)
                 self.end_headers()
             elif path.startswith('/api/reports/'):
+                parts = path.split('/')
+                if len(parts) not in (4, 5) or (len(parts) == 5 and parts[4] != 'duplicates'):
+                    raise ValueError('Invalid scan report URL')
                 try:
-                    scan_id=int(path.rsplit('/',1)[1])
+                    scan_id = int(parts[3])
+                    if scan_id < 1:
+                        raise ValueError()
                 except ValueError:
                     raise ValueError('Invalid scan ID')
-                c=connect(DB,readonly=True)
+                c = connect(DB, readonly=True)
                 try:
-                    data=read_scan_report(c,scan_id)
+                    data = read_scan_report(c, scan_id)
                 finally:
                     c.close()
                 if data is None:
-                    self.respond({'error':'Report unavailable for this scan (legacy history may predate reporting)'},404)
+                    data = reconstruct_legacy_scan_report(DB, scan_id)
+                if data is None:
+                    self.respond({'error':'Scan does not exist'}, 404)
+                elif len(parts) == 5:
+                    q = parse_qs(parsed.query)
+                    limit = min(max(int(q.get('limit',['25'])[0]),1),100)
+                    offset = max(int(q.get('offset',['0'])[0]),0)
+                    search = q.get('search',[''])[0][:200]
+                    root = q.get('root',[''])[0]
+                    sort = q.get('sort',['wasted'])[0]
+                    c = connect(DB, readonly=True)
+                    try:
+                        self.respond(list_scan_duplicate_groups(c, scan_id, data, limit,
+                                                               offset, search, root, sort))
+                    finally:
+                        c.close()
                 else:
                     self.respond(data)
             elif path == '/api/monitoring':

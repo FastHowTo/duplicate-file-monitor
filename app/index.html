@@ -79,6 +79,10 @@ input,select{border:1px solid #40536d;background:#0d1728;color:white;padding:9px
 #lifetime{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.lifetime-value{font-size:1.35rem;font-weight:700;font-variant-numeric:tabular-nums}
 .stage-line{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-top:10px}#stage-name{font-size:1.17rem;font-weight:750}#stage-pct{font-size:1.17rem;font-weight:750;font-variant-numeric:tabular-nums}
 .meter{height:12px;background:#2a3950;border-radius:8px;overflow:hidden;margin:9px 0 10px}.meter div{height:100%;width:0;background:#65abff;transition:width .2s}.meter.failed div{background:#ed505b}
+.meter.complete div{background:#30b984}.meter.warning div{background:#e6a83d}.meter.cancelled div{background:#8793a4}
+#stage-name.stage-complete{color:#a5efcc}#stage-name.stage-warning{color:#ffe0a0}#stage-name.stage-failed{color:#ffb6b1}#stage-name.stage-cancelled{color:#d0d6df}
+.scan-report-link{color:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}.scan-report-link:hover{filter:brightness(1.3)}
+.report-dupe-toolbar{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin:12px 0}.report-dupe-group{padding:10px 0;border-bottom:1px solid #2a3950}.report-dupe-path{font-family:ui-monospace,Consolas,monospace;overflow-wrap:anywhere;font-size:.85rem;padding:3px 0}.report-dupe-external{color:#e7be7f}.report-dupe-selected{color:#c9e6fc}
 #stage-details{font-size:.91rem;min-height:1.25rem;line-height:1.55;color:#b3c4d9;font-variant-numeric:tabular-nums}
 .spinner:not([hidden]){display:inline-block;vertical-align:-2px;width:15px;height:15px;margin-left:9px;border:2px solid #48627f;border-top-color:#65abff;border-radius:50%;animation:spin .9s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -175,13 +179,70 @@ $('report-close').onclick=()=>{$('report-overlay').hidden=true};
 function reportStatus(status,count){if(status==='success')return count?'Completed with '+count+' warnings':'Completed';if(status==='failed'||status==='interrupted')return 'Failed';if(status==='cancelled')return 'Cancelled';return status}
 function reportColor(status,count){return status==='success'?(count?'#ffd595':'#a5efcc'):status==='failed'||status==='interrupted'?'#ffb6b1':status==='cancelled'?'#d0d6df':'#a6b7ce'}
 function metricDelta(n,unit=''){if(n==null)return '—';return (n>0?'+':'')+(unit==='bytes'?bytes(n):fmt(n))}
-function makeReportLink(scanId){const btn=document.createElement('button');btn.className='secondary';btn.textContent='View scan report';btn.onclick=()=>openReport(scanId);return btn}
+function makeReportLink(scanId,label='View scan report'){const link=document.createElement('a');link.href='#';link.className='scan-report-link';link.textContent=label;link.addEventListener('click',e=>{e.preventDefault();openReport(scanId).catch(err=>message(err.message,true))});return link}
+
+async function renderReportDuplicates(scanId, report, target){
+ const heading=document.createElement('h3');heading.textContent='Duplicate files in this scan';target.append(heading);
+ if(!report.duplicate_snapshot_available){
+  const info=document.createElement('p');info.className='muted';info.textContent='Exact historical duplicate paths unavailable: this scan predates archived duplicate-path snapshots or did not complete successfully.';target.append(info);return;
+ }
+ const intro=document.createElement('p');intro.className='muted tiny';
+ intro.textContent='Every full-SHA-256-confirmed group touching the scanned volumes, including previously known duplicates. Matches on other volumes are marked Outside scan scope. Archived as of this scan; not today’s inventory.';
+ target.append(intro);
+ const toolbar=document.createElement('div');toolbar.className='report-dupe-toolbar';
+ const search=document.createElement('input');search.type='search';search.placeholder='Search full file paths';search.setAttribute('aria-label','Search report duplicate paths');
+ const volume=document.createElement('select');volume.setAttribute('aria-label','Filter report duplicate volume');
+ volume.add(new Option('All scanned volumes',''));
+ for(const root of report.roots||[])volume.add(new Option(root,root));
+ const sort=document.createElement('select');sort.setAttribute('aria-label','Sort report duplicate groups');
+ for(const [value,label] of [['wasted','Most redundant space'],['size','Largest files'],['copies','Most copies']])sort.add(new Option(label,value));
+ toolbar.append(search,volume,sort);target.append(toolbar);
+ const results=document.createElement('div');target.append(results);
+ const pager=document.createElement('div');pager.className='page-controls';target.append(pager);
+ let page=0,requestSerial=0;
+ async function load(){
+  const serial=++requestSerial, qs=new URLSearchParams({offset:String(page*25),limit:'25',search:search.value,root:volume.value,sort:sort.value});
+  results.textContent='Loading archived duplicate groups…';pager.replaceChildren();
+  try{
+   const data=await api('/api/reports/'+encodeURIComponent(scanId)+'/duplicates?'+qs);
+   if(serial!==requestSerial)return;
+   results.replaceChildren();
+   if(!data.items.length){const empty=document.createElement('p');empty.className='muted';empty.textContent='No matching duplicate groups in this scan.';results.append(empty)}
+   for(const group of data.items){
+    const block=document.createElement('div');block.className='report-dupe-group';
+    const label=document.createElement('div');label.className='duplicate-name';
+    label.textContent=group.paths.length+' matching files · '+bytes(group.size_bytes)+' each · '+group.scoped_copies+' in scan scope';
+    block.append(label);
+    const tag=document.createElement('div');tag.className='muted tiny';tag.textContent='SHA-256: '+group.sha256;block.append(tag);
+    for(const file of group.paths){
+     const line=document.createElement('div');line.className='report-dupe-path '+(file.in_scope?'report-dupe-selected':'report-dupe-external');
+     line.textContent=(file.in_scope?'Scanned':'Outside scan scope')+' · '+file.path;
+     block.append(line);
+    }
+    results.append(block);
+   }
+   const label=document.createElement('span');label.className='page-info';
+   label.textContent='Groups '+(data.total_groups?data.offset+1:0)+'–'+Math.min(data.offset+data.items.length,data.total_groups)+' of '+fmt(data.total_groups);
+   const prev=document.createElement('button');prev.className='secondary';prev.textContent='Previous';prev.disabled=page===0;
+   prev.onclick=()=>{page--;load()};
+   const next=document.createElement('button');next.className='secondary';next.textContent='Next';next.disabled=!data.has_more;
+   next.onclick=()=>{page++;load()};
+   pager.append(prev,label,next);
+  }catch(err){if(serial===requestSerial)results.textContent='Could not load archived duplicates: '+err.message}
+ }
+ let searchTimer=null;
+ search.addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{page=0;load()},250)});
+ volume.onchange=()=>{page=0;load()};
+ sort.onchange=()=>{page=0;load()};
+ await load();
+}
 async function openReport(scanId){
  const report=await api('/api/reports/'+encodeURIComponent(scanId));
  const target=$('report-content');target.replaceChildren();
  const status=document.createElement('p');
- status.textContent=reportStatus(report.status,report.warnings?.length||0);
- status.style.color=reportColor(report.status,report.warnings?.length||0);target.append(status);
+ status.textContent=reportStatus(report.status,report.warning_details_available===false?0:(report.warnings?.length||0));
+ status.style.color=reportColor(report.status,report.warning_details_available===false?0:(report.warnings?.length||0));target.append(status);
+ if(report.reconstructed){const p=document.createElement('p');p.className='archived';p.textContent=report.reconstruction_note||'Reconstructed from available historical scan records. Unavailable values are not inferred.';target.append(p)}
  const meta=document.createElement('p');meta.textContent=`Started: ${date(report.started)} · Finished: ${date(report.ended)} · Duration: ${duration(report.duration_seconds)} · Mode: ${report.mode} · Volumes: ${report.roots?.length||0}`;target.append(meta);
  if(report.error){const p=document.createElement('p');p.className='error';p.textContent=report.error;target.append(p)}
  const table=document.createElement('table');
@@ -193,15 +254,17 @@ async function openReport(scanId){
   for(const val of [vol.root,fmt(vol.file_count),metricDelta(vol.file_delta),bytes(vol.total_size_bytes),metricDelta(vol.size_delta,'bytes'),fmt(vol.duplicate_copies),metricDelta(vol.duplicate_delta),bytes(vol.wasted_bytes),metricDelta(vol.wasted_delta,'bytes'),date(vol.previous_scan_at)])cell(tr,val);
   table.append(tr);
  }target.append(table);
- const h=document.createElement('h3');h.textContent='Warnings ('+(report.warnings?.length||0)+')';target.append(h);
- if(!report.warnings?.length){const p=document.createElement('p');p.textContent='No warnings recorded.';target.append(p)}
+ const h=document.createElement('h3');h.textContent=report.warning_details_available===false?'Warnings (historical details unavailable)':'Warnings ('+(report.warnings?.length||0)+')';target.append(h);
+ if(report.warning_details_available===false){const p=document.createElement('p');p.textContent='Warning details unavailable — this scan predates warning tracking. An absence of recorded warnings does not mean there were none.';target.append(p)}
+ else if(!report.warnings?.length){const p=document.createElement('p');p.textContent='No warnings recorded.';target.append(p)}
  else for(const warning of report.warnings){const p=document.createElement('p');p.className='path';p.textContent=`[${warning.category}] ${warning.path}: ${warning.message}`;target.append(p)}
  $('report-overlay').hidden=false;
+ await renderReportDuplicates(scanId,report,target);
 }
 function message(text,bad=false){$('message').textContent=text;$('message').className=bad?'error':'ok'}
 // This value belongs to the HTML/JS currently loaded in the browser, not the
 // footer's server-supplied version. Detect deployments while polling.
-const LOADED_UI_VERSION = '0.6.4';
+const LOADED_UI_VERSION = '0.6.5';
 const RELEASES_API = 'https://api.github.com/repos/FastHowTo/duplicate-file-monitor/releases/latest';
 function versionParts(value){
   const match=String(value||'').trim().match(/^v?(\d+)\.(\d+)\.(\d+)$/i);
@@ -309,7 +372,7 @@ function progressRender(s){lastStatus=s;const active=!!s.scanning,p=active?s.pro
   if(changes)$('changes-summary').textContent=`Quick Scan changes: ${fmt(changes.added)} added · ${fmt(changes.removed)} removed · ${fmt(changes.modified)} modified · ${fmt(changes.possible_moves)} possible moves`;
   $('saved').textContent=bytes(s.lifetime);
   $('finalizing-indicator').hidden=!finalizing;
-  const meter=$('progress-meter');meter.classList.remove('failed');const fill=$('progress-fill');meter.hidden=true;$('stage-pct').textContent='';
+  const meter=$('progress-meter');meter.classList.remove('failed','complete','warning','cancelled');const fill=$('progress-fill');const stageName=$('stage-name');stageName.classList.remove('stage-complete','stage-warning','stage-failed','stage-cancelled');meter.hidden=true;$('stage-pct').textContent='';
   if(active&&p){
     if(finalizing){$('stage-name').textContent='Finalizing';detailsLines(finalizingLines(p));}
     else if(cleaning){$('stage-name').textContent='Cleaning up';detailsLines(['Finishing database cleanup…']);}
@@ -317,11 +380,11 @@ function progressRender(s){lastStatus=s;const active=!!s.scanning,p=active?s.pro
     else if(preparing){$('stage-name').textContent='Preparing scan';detailsLines([p?.preparing_step||'Preparing inventory…']);}
     else if(p.stage==='enumerating'){$('stage-name').textContent='File Discovery';const line=document.createElement('span');line.textContent='Discovering files · '+fmt(p.directories_visited||0)+' directories visited · '+(p.current_path||'');const dots=document.createElement('span');dots.id='discovery-dots';dots.className='discovery-dots';dots.textContent='.'.repeat(discoveryDot);$('stage-details').replaceChildren(line,dots)}
     else{const st=stageProgress(p);$('stage-name').textContent=st.name;meter.hidden=false;fill.style.width=Math.max(0,Math.min(100,st.pct)).toFixed(1)+'%';$('stage-pct').textContent=st.pct.toFixed(1)+'%';detailsLines(st.lines)}
-  }else if(s.status==='success'){$('stage-name').textContent=reportStatus(s.status,s.warning_count||0);meter.hidden=false;fill.style.width='100%';$('stage-pct').textContent='100%';detailsLines([s.warning_count?('Scan completed with '+s.warning_count+' recoverable warnings'):'Scan completed successfully'])}
+  }else if(s.status==='success'){$('stage-name').textContent=reportStatus(s.status,s.warning_count||0);stageName.classList.add(s.warning_count?'stage-warning':'stage-complete');meter.classList.add(s.warning_count?'warning':'complete');meter.hidden=false;fill.style.width='100%';$('stage-pct').textContent='100%';detailsLines([s.warning_count?('Scan completed with '+s.warning_count+' recoverable warnings'):'Scan completed successfully'])}
   else if(s.status==='failed'||s.status==='cancelled'||s.status==='interrupted'){
     const st=p?stageProgress(p):{pct:0,name:'File Discovery',lines:[]};const pct=st.pct==null?0:Math.max(0,Math.min(100,st.pct));$('stage-name').textContent=reportStatus(s.status,s.warning_count||0);
     const stageHasPercent=!!p&&['partial_hashing','full_hashing'].includes(p.stage);
-    meter.hidden=!stageHasPercent;if(s.status==='failed')meter.classList.add('failed');fill.style.width=pct.toFixed(1)+'%';$('stage-pct').textContent=stageHasPercent?pct.toFixed(1)+'%':'';
+    meter.hidden=!stageHasPercent;const outcome=s.status==='cancelled'?'cancelled':'failed';meter.classList.add(outcome);stageName.classList.add('stage-'+outcome);fill.style.width=pct.toFixed(1)+'%';$('stage-pct').textContent=stageHasPercent?pct.toFixed(1)+'%':'';
     const lines=s.status==='failed'?['ERROR',String(s.error||'Unknown scan error')]:s.status==='cancelled'?['Scan cancelled',...st.lines]:['Scan interrupted. Previous published inventory retained.',...st.lines];
     detailsLines(lines,s.status==='failed');if(s.status==='failed'&&p?.stage==='full_hashing')detailsLines([...lines,...st.lines],true);
   }else{$('stage-name').textContent='No scans yet';detailsLines(['Start a scan to discover duplicate files.'])}
@@ -630,7 +693,7 @@ async function refresh(){if(stateBusy)return;stateBusy=true;try{
     const tr=document.createElement('tr'),isActive=s.scanning&&item.id===s.progress?.scan_id;
     cell(tr,date(item.started));cell(tr,((item.mode||'full')==='quick'?'Quick':'Full')+(item.scope&&item.scope.length===1?' · '+item.scope[0].split('/').pop():item.scope&&item.scope.length>1?' · '+item.scope.length+' volumes':''));
     const st=cell(tr,isActive?'Running':reportStatus(item.status,item.warning_count||0));
-    if(!isActive){st.style.color=reportColor(item.status,item.warning_count||0)}
+    if(!isActive){const statusLink=makeReportLink(item.id,reportStatus(item.status,item.warning_count||0));statusLink.style.color=reportColor(item.status,item.warning_count||0);st.replaceChildren(statusLink)}
     if(item.error&&!isActive)st.title=item.error;
     // Historical records are immutable snapshots. Never substitute current totals.
     cell(tr,fmt(item.files),'num');cell(tr,fmt(item.duplicates),'num');cell(tr,bytes(item.wasted),'num');
@@ -644,7 +707,6 @@ async function refresh(){if(stateBusy)return;stateBusy=true;try{
       for(const vol of item.volumes){const line=document.createElement('div');line.className='tiny';
         line.textContent=`${vol.root.split('/').pop()||vol.root}: ${fmt(vol.file_count)} files · ${vol.duplicate_copies==null?'—':fmt(vol.duplicate_copies)} duplicates`;
         disclosure.append(line)}details.append(disclosure)}
-    if(!isActive&&item.has_report)details.append(makeReportLink(item.id));
     history.append(tr)
   }
   if(!h.length){const tr=document.createElement('tr');cell(tr,'No scans yet.');history.append(tr)}

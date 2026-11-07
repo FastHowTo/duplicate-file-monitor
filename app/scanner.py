@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 import sqlite3
+import zlib
 import stat
 import threading
 import time
@@ -72,6 +73,8 @@ CREATE INDEX IF NOT EXISTS work_samples_idx ON work_files(size,samples);
 -- Efficient live lookups for exact, fully fingerprinted duplicate copies.
 CREATE INDEX IF NOT EXISTS work_full_idx ON work_files(size,full) WHERE full IS NOT NULL;
 CREATE TABLE IF NOT EXISTS scan_reports(scan_id INTEGER PRIMARY KEY, report_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS scan_duplicate_groups(scan_id INTEGER NOT NULL,group_no INTEGER NOT NULL,size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,scoped_copies INTEGER NOT NULL,total_copies INTEGER NOT NULL,wasted_bytes INTEGER NOT NULL,paths_blob BLOB NOT NULL,PRIMARY KEY(scan_id,group_no));
+CREATE INDEX IF NOT EXISTS scan_duplicate_sort_idx ON scan_duplicate_groups(scan_id,wasted_bytes DESC,group_no);
 CREATE TABLE IF NOT EXISTS scan_warnings(id INTEGER PRIMARY KEY,scan_id INTEGER NOT NULL,root TEXT NOT NULL,path TEXT NOT NULL,category TEXT NOT NULL,message TEXT NOT NULL,created REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS warning_scan_idx ON scan_warnings(scan_id);
 CREATE TABLE IF NOT EXISTS scan_progress(
@@ -116,7 +119,8 @@ def _current_schema_readonly(db):
     try:
         required = {'files','scans','meta','volume_scans','excluded_roots',
                     'invalid_baselines','hash_cache','partial_cache',
-                    'work_files','scan_progress','scan_reports','scan_warnings'}
+                    'work_files','scan_progress','scan_reports','scan_warnings',
+                    'scan_duplicate_groups'}
         present = {row[0] for row in c.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         if not required.issubset(present):
@@ -414,6 +418,181 @@ def _save_warnings(c,scan_id,items,control):
 def read_scan_report(c,scan_id):
     record=c.execute('SELECT report_json FROM scan_reports WHERE scan_id=?',(scan_id,)).fetchone()
     return json.loads(record['report_json']) if record else None
+
+
+def reconstruct_legacy_scan_report(db, scan_id):
+    """Persist a truthful, immutable report using ONLY historical scan rows.
+
+    No current file inventory is consulted: missing path lists, warnings and
+    historical logical sizes must remain explicitly unavailable.
+    """
+    c = connect(db)
+    try:
+        with c:
+            existing = read_scan_report(c, scan_id)
+            if existing is not None:
+                return existing
+            row = c.execute('SELECT * FROM scans WHERE id=?', (scan_id,)).fetchone()
+            if row is None:
+                return None
+            scan = dict(row)
+            try:
+                progress = json.loads(scan.get('progress_json') or '{}')
+                if not isinstance(progress, dict):
+                    progress = {}
+            except (TypeError, ValueError):
+                progress = {}
+            members = [dict(v) for v in c.execute(
+                'SELECT * FROM volume_scans WHERE scan_id=? ORDER BY root', (scan_id,))]
+            raw_roots = progress.get('scan_scope')
+            roots = list(dict.fromkeys(r for r in raw_roots if isinstance(r, str))) if isinstance(raw_roots, list) else []
+            for member in members:
+                if member['root'] not in roots:
+                    roots.append(member['root'])
+            volumes = []
+            for member in members:
+                previous = c.execute("""SELECT v.file_count,v.duplicate_copies,v.wasted_bytes,s.ended
+                     FROM volume_scans v JOIN scans s ON s.id=v.scan_id
+                     WHERE v.root=? AND v.scan_id<? AND s.status='success'
+                     ORDER BY v.scan_id DESC LIMIT 1""",
+                     (member['root'], scan_id)).fetchone()
+                def delta(current, old):
+                    return current - old if current is not None and old is not None else None
+                volumes.append({
+                    'root': member['root'], 'file_count': member['file_count'],
+                    'file_delta': delta(member['file_count'], previous['file_count']) if previous else None,
+                    'total_size_bytes': None, 'size_delta': None,
+                    'duplicate_copies': member.get('duplicate_copies'),
+                    'duplicate_delta': delta(member.get('duplicate_copies'), previous['duplicate_copies']) if previous else None,
+                    'wasted_bytes': member.get('wasted_bytes'),
+                    'wasted_delta': delta(member.get('wasted_bytes'), previous['wasted_bytes']) if previous else None,
+                    'previous_scan_at': previous['ended'] if previous else None})
+            def sum_if_complete(key):
+                values = [v[key] for v in volumes]
+                return sum(values) if values and len(volumes) == len(roots) and all(v is not None for v in values) else None
+            started, ended = scan['started'], scan['ended']
+            total = {
+                'root': 'Recorded scan total',
+                'file_count': scan.get('files'), 'file_delta': sum_if_complete('file_delta'),
+                'total_size_bytes': None, 'size_delta': None,
+                'duplicate_copies': scan.get('duplicates'), 'duplicate_delta': sum_if_complete('duplicate_delta'),
+                'wasted_bytes': scan.get('wasted'), 'wasted_delta': sum_if_complete('wasted_delta'),
+                'previous_scan_at': None}
+            reconstructed = {
+                'scan_id': scan_id, 'status': scan['status'], 'started': started,
+                'ended': ended, 'duration_seconds': round(max(0, ended - started), 2) if started is not None and ended is not None else None,
+                'mode': scan.get('mode') or 'full', 'roots': roots,
+                'volumes': volumes, 'totals': total, 'warnings': [],
+                'warning_details_available': False, 'duplicate_snapshot_available': False,
+                'error': scan.get('error') or '', 'reconstructed': True,
+                'reconstruction_note': 'Reconstructed from stored scan history. Old file paths, historical logical size and unrecorded warning details are unavailable.'}
+            c.execute('INSERT OR IGNORE INTO scan_reports(scan_id,report_json) VALUES(?,?)',
+                      (scan_id, json.dumps(reconstructed)))
+            return read_scan_report(c, scan_id)
+    finally:
+        c.close()
+
+
+def _stage_scan_duplicate_groups(c, roots, control):
+    """Save compressed content-verified group snapshots in temp SQLite.
+
+    All matching paths are saved, but only groups touching the scanned roots
+    qualify. Compressed blobs avoid repeating mostly-identical path prefixes.
+    The final copy into the permanent archive occurs atomically with inventory
+    publication; aborted scans never publish a partial duplicate snapshot.
+    """
+    selected = set(roots)
+    c.execute('DROP TABLE IF EXISTS temp.scan_dup_stage')
+    c.execute("""CREATE TEMP TABLE scan_dup_stage(
+        group_no INTEGER PRIMARY KEY, size_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL,
+        scoped_copies INTEGER NOT NULL, total_copies INTEGER NOT NULL,
+        wasted_bytes INTEGER NOT NULL, paths_blob BLOB NOT NULL)""")
+    group_no = 0
+    path_count = 0
+    selected_count = 0
+    members = []
+    previous_key = None
+    def emit(key, matches):
+        nonlocal group_no, path_count, selected_count
+        if key is None or len(matches) < 2:
+            return
+        scoped = sum(1 for m in matches if m['root'] in selected)
+        if not scoped:
+            return
+        paths = [{'path': m['path'], 'root': m['root'],
+                  'in_scope': m['root'] in selected} for m in matches]
+        blob = zlib.compress(json.dumps(paths, ensure_ascii=False,
+                             separators=(',', ':')).encode('utf-8'), 4)
+        c.execute('INSERT INTO temp.scan_dup_stage VALUES(?,?,?,?,?,?,?)',
+                  (group_no, key[0], key[1], scoped, len(matches),
+                   key[0] * (len(matches) - 1), blob))
+        group_no += 1
+        path_count += len(matches)
+        selected_count += scoped
+        if group_no % 2048 == 0:
+            control.check()
+    visited = 0
+    for file in c.execute("""SELECT size,full,root,path FROM work_files
+                             WHERE size>0 AND full IS NOT NULL ORDER BY size,full"""):
+        key = (file['size'], file['full'])
+        if key != previous_key:
+            emit(previous_key, members)
+            members = []
+            previous_key = key
+        members.append({'root': file['root'], 'path': file['path']})
+        visited += 1
+        if visited % 4096 == 0:
+            control.check()
+    emit(previous_key, members)
+    control.check()
+    c.commit()  # Temp-only writes; permanent inventory remains untouched.
+    return group_no, path_count, selected_count
+
+
+def list_scan_duplicate_groups(c, scan_id, report_data, limit=25, offset=0,
+                               search='', root='', sort='wasted'):
+    """Paginate exact archived duplicate groups, never today's global files."""
+    if sort not in ('wasted', 'size', 'copies'):
+        raise ValueError('Unsupported duplicate snapshot sort')
+    if root and root not in report_data.get('roots', []):
+        raise ValueError('Volume is not part of this scan')
+    if not report_data.get('duplicate_snapshot_available'):
+        return {'available': False, 'reason': 'Exact historical duplicate paths were not recorded for this scan.',
+                'items': [], 'total_groups': None, 'total_pages': None}
+    limit = min(100, max(1, int(limit)))
+    offset = max(0, int(offset))
+    search = (search or '')[:200].casefold()
+    order = {'wasted': 'wasted_bytes DESC', 'size': 'size_bytes DESC',
+             'copies': 'total_copies DESC'}[sort] + ',group_no ASC'
+    base_sql = 'SELECT * FROM scan_duplicate_groups WHERE scan_id=? ORDER BY ' + order
+    def unpack(row):
+        paths = json.loads(zlib.decompress(row['paths_blob']).decode('utf-8'))
+        return {'size_bytes': row['size_bytes'], 'sha256': row['sha256'],
+                'scoped_copies': row['scoped_copies'], 'copies': row['total_copies'],
+                'wasted_bytes': row['wasted_bytes'], 'paths': paths}
+    if not search and not root:
+        total = int(report_data.get('duplicate_group_count', 0))
+        rows = c.execute(base_sql + ' LIMIT ? OFFSET ?', (scan_id, limit, offset))
+        items = [unpack(row) for row in rows]
+    else:
+        # Compressed per-group storage minimizes history growth. Searching older
+        # archives scans their compressed group payloads without touching NAS.
+        items = []
+        total = 0
+        for row in c.execute(base_sql, (scan_id,)):
+            item = unpack(row)
+            if root and not any(p['root'] == root and p['in_scope'] for p in item['paths']):
+                continue
+            if search and search not in item['sha256'].casefold() and not any(
+                    search in p['path'].casefold() for p in item['paths']):
+                continue
+            if offset <= total < offset + limit:
+                items.append(item)
+            total += 1
+    return {'available': True, 'items': items, 'total_groups': total,
+            'total_pages': max(1, (total + limit - 1) // limit),
+            'offset': offset, 'limit': limit, 'has_more': offset + len(items) < total,
+            'sort': sort, 'source': 'immutable_scan_snapshot'}
 
 def _previous_snapshot(c,root):
     row=c.execute("""SELECT s.ended,v.file_count,v.duplicate_copies,v.wasted_bytes,r.report_json
@@ -1659,6 +1838,13 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
         report_data={'scan_id':scan_id,'status':'success','started':start,
             'ended':None,'duration_seconds':None,'mode':mode,'roots':rootlist,
             'volumes':report_volumes,'totals':total_row,'warnings':warning_rows,'error':''}
+        control.finalizing('Archiving complete duplicate paths for scanned volumes')
+        snapshot_groups, snapshot_paths, snapshot_scoped = _stage_scan_duplicate_groups(c,rootlist,control)
+        report_data.update(duplicate_snapshot_available=True,
+                           duplicate_group_count=snapshot_groups,
+                           duplicate_path_count=snapshot_paths,
+                           duplicate_scoped_path_count=snapshot_scoped,
+                           warning_details_available=True)
         control.begin_finalizing()  # cancellation closes only at atomic publish
         control.finalizing('Committing changed inventory records and scan history')
         print('Finalizing: publishing inventory delta and committing scan history',flush=True)
@@ -1725,6 +1911,9 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
             final_progress['warning_count']=warning_count
             report_data['ended']=ended
             report_data['duration_seconds']=round(ended-start,2)
+            c.execute('INSERT INTO scan_duplicate_groups(scan_id,group_no,size_bytes,sha256,scoped_copies,total_copies,wasted_bytes,paths_blob) '
+                      'SELECT ?,group_no,size_bytes,sha256,scoped_copies,total_copies,wasted_bytes,paths_blob '
+                      'FROM temp.scan_dup_stage', (scan_id,))
             c.execute('INSERT INTO scan_reports(scan_id,report_json) VALUES(?,?)',
                       (scan_id,json.dumps(report_data)))
             c.execute("""UPDATE scans SET ended=?,status='success',error='',files=?,
