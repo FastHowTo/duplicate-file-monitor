@@ -386,10 +386,20 @@ def _preserve_existing(c,root,path,directory=False):
             FROM files WHERE root=? AND (path=? OR substr(path,1,?)=?)""",
             (root,path,len(prefix),prefix))
     else:
-        c.execute("""INSERT OR REPLACE INTO work_files
+        # Never use INSERT OR REPLACE here: replacing an existing row changes
+        # its rowid, which may cause rowid-paginated hashing to revisit an
+        # unstable candidate indefinitely.
+        c.execute("""INSERT OR IGNORE INTO work_files
             (path,root,size,mtime_ns,dev,inode,partial,samples,full)
             SELECT path,root,size,mtime_ns,dev,inode,partial,NULL,full
             FROM files WHERE root=? AND path=?""",(root,path))
+        c.execute("""UPDATE work_files SET
+            (root,size,mtime_ns,dev,inode,partial,samples,full)=
+            (SELECT root,size,mtime_ns,dev,inode,partial,NULL,full
+             FROM files WHERE root=? AND path=?)
+            WHERE path=? AND EXISTS(SELECT 1 FROM files WHERE root=? AND path=?)""",
+            (root,path,path,root,path))
+
 
 def _save_warnings(c,scan_id,items,control):
     if not items: return
