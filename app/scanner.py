@@ -1593,6 +1593,9 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
         control.finalizing('Preparing per-volume scan history')
         per_root = {r['root']: r['n'] for r in c.execute('''SELECT root,COUNT(*) n
                                                              FROM work_files GROUP BY root''')}
+        size_roots={r['root']:r['total'] for r in c.execute(
+            'SELECT root,COALESCE(SUM(size),0) total FROM work_files GROUP BY root')}
+        previous_roots={root:_previous_snapshot(c,root) for root in rootlist}
         per_changes = {}
         for root in rootlist:
             per_root.setdefault(root, 0)
@@ -1611,6 +1614,34 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
         root_dupes = _snapshot_volume_duplicate_metrics(c, rootlist)
         volume_metrics_seconds = round(time.monotonic() - volume_metrics_started, 3)
         control.check()
+        warning_rows=[dict(w) for w in c.execute(
+            'SELECT root,path,category,message,created FROM scan_warnings WHERE scan_id=? ORDER BY id',
+            (scan_id,))]
+        report_volumes=[]
+        for root in rootlist:
+            previous=previous_roots[root]
+            copies,space=root_dupes[root]
+            size_bytes=size_roots.get(root,0)
+            def diff(key,current):
+                return current-previous[key] if previous is not None and previous[key] is not None else None
+            report_volumes.append({'root':root,'file_count':per_root[root],
+                'file_delta':diff('file_count',per_root[root]),
+                'total_size_bytes':size_bytes,'size_delta':diff('total_size_bytes',size_bytes),
+                'duplicate_copies':copies,'duplicate_delta':diff('duplicate_copies',copies),
+                'wasted_bytes':space,'wasted_delta':diff('wasted_bytes',space),
+                'previous_scan_at':previous['ended'] if previous else None})
+        def sum_metric(key):
+            return sum(v[key] for v in report_volumes)
+        def sum_diff(key):
+            return sum(v[key] for v in report_volumes) if all(v[key] is not None for v in report_volumes) else None
+        total_row={'root':'Selected volumes total','file_count':sum_metric('file_count'),
+            'file_delta':sum_diff('file_delta'),'total_size_bytes':sum_metric('total_size_bytes'),
+            'size_delta':sum_diff('size_delta'),'duplicate_copies':sum_metric('duplicate_copies'),
+            'duplicate_delta':sum_diff('duplicate_delta'),'wasted_bytes':sum_metric('wasted_bytes'),
+            'wasted_delta':sum_diff('wasted_delta'),'previous_scan_at':None}
+        report_data={'scan_id':scan_id,'status':'success','started':start,
+            'ended':None,'duration_seconds':None,'mode':mode,'roots':rootlist,
+            'volumes':report_volumes,'totals':total_row,'warnings':warning_rows,'error':''}
         control.begin_finalizing()  # cancellation closes only at atomic publish
         control.finalizing('Committing changed inventory records and scan history')
         print('Finalizing: publishing inventory delta and committing scan history',flush=True)
@@ -1673,11 +1704,17 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
                                   files_indexed=count, files_discovered=count,
                                   confirmed_duplicate_copies=dupes,
                                   confirmed_wasted_bytes=wasted)
-            c.execute('''UPDATE scans SET ended=?,status='success',error='',files=?,
-                         duplicates=?,wasted=?,lifetime=?,progress_json=?,changes_json=?
-                         WHERE id=?''',
-                      (ended,count,dupes,wasted,lifetime,
-                       json.dumps(final_progress),json.dumps(change_totals),scan_id))
+            warning_count=len(warning_rows)
+            final_progress['warning_count']=warning_count
+            report_data['ended']=ended
+            report_data['duration_seconds']=round(ended-start,2)
+            c.execute('INSERT INTO scan_reports(scan_id,report_json) VALUES(?,?)',
+                      (scan_id,json.dumps(report_data)))
+            c.execute("""UPDATE scans SET ended=?,status='success',error='',files=?,
+                          duplicates=?,wasted=?,lifetime=?,progress_json=?,changes_json=?,warning_count=?
+                          WHERE id=?""",
+                       (ended,count,dupes,wasted,lifetime,
+                        json.dumps(final_progress),json.dumps(change_totals),warning_count,scan_id))
         # The success row and published data are in the same committed
         # transaction. There is no second transaction that can leave the UI
         # showing an earlier completed duration while the run is still active.
@@ -1690,7 +1727,7 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
         publication_timings['finalization_total_seconds'] = round(time.monotonic() - finalization_started, 3)
         print('Finalization timings: ' + json.dumps(publication_timings), flush=True)
         control.set_progress(**final_progress)
-        result = {'status':'success','files_scanned':count,'scan_scope':rootlist,
+        result = {'status':'success','warning_count':len(warning_rows),'files_scanned':count,'scan_scope':rootlist,
                   'scan_duplicates_count':dupes,'scan_wasted_space':wasted,
                   'current_duplicates_count':global_dupes,'current_wasted_space':global_wasted,
                   'lifetime_space_saved':lifetime,
@@ -1712,10 +1749,20 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
                 # so diagnostic recording cannot accidentally commit partial work.
                 c.rollback()
                 with c:
-                    c.execute('''UPDATE scans SET ended=?,status=?,error=?,progress_json=?
-                                 WHERE id=?''',
-                              (time.time(),status,str(exc)[:2000],
-                               json.dumps(control.snapshot()),scan_id))
+                    ended_at=time.time()
+                    warnings=[dict(w) for w in c.execute(
+                        'SELECT root,path,category,message,created FROM scan_warnings WHERE scan_id=? ORDER BY id',
+                        (scan_id,))]
+                    diagnostics={'scan_id':scan_id,'status':status,'started':start,
+                        'ended':ended_at,'duration_seconds':round(ended_at-start,2),
+                        'mode':mode,'roots':rootlist,'volumes':[],'totals':None,
+                        'warnings':warnings,'error':str(exc)[:2000]}
+                    c.execute('INSERT OR REPLACE INTO scan_reports(scan_id,report_json) VALUES(?,?)',
+                              (scan_id,json.dumps(diagnostics)))
+                    c.execute('''UPDATE scans SET ended=?,status=?,error=?,progress_json=?,warning_count=?
+                                  WHERE id=?''',
+                               (ended_at,status,str(exc)[:2000],
+                                json.dumps(control.snapshot()),len(warnings),scan_id))
             except Exception as status_exc:
                 # Never hide the original failure with a secondary SQLite error.
                 print('Could not record scan failure: ' + repr(status_exc), flush=True)
