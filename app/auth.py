@@ -193,7 +193,10 @@ def cookie_header(token):
     return cookie
 
 def clear_cookie_header():
-    return cookie_header('')+'; Max-Age=0'
+    cookie=f'{COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0'
+    if os.getenv('DFM_COOKIE_SECURE','true').lower() not in ('false','0','no'):
+        cookie += '; Secure'
+    return cookie
 
 def metrics_authorized(header):
     expected = os.getenv('DFM_METRICS_TOKEN','')
