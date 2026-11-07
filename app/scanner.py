@@ -796,7 +796,7 @@ def _hash_candidate_pages(c, predicate, params, stage, control, scan_id):
                         else:
                             c.execute('UPDATE work_files SET partial=NULL,full=NULL WHERE path=?',
                                       (item['path'],))
-                _save_warnings(c,scan_id,skipped,control)
+                _save_warnings(c,scan_id,[v for v in skipped if v['category']!='excluded'],control)
             if stage == 'partial_hashing':
                 control.add_progress(partial_files_checked=len(rows))
             else:
