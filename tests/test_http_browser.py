@@ -15,17 +15,36 @@ import pytest
 from test_regression import prepare_baseline, setup
 
 APP=Path(__file__).resolve().parents[1]
+AUTH={}
+METRICS_TOKEN='test-metrics-token-for-dfm-ci-9876543210'
 
 
 def request(base, path, data=None):
+    if path not in ('/api/startup','/health') and base not in AUTH:
+        # CI uses a new disposable private database. No default app credentials.
+        username='test-admin'
+        password='a-very-long-test-password'
+        setup_token='test-setup-token-for-dfm-ci-1234567890'
+        req=urllib.request.Request(base+'/api/auth/setup',
+            data=json.dumps({'setup_token':setup_token,'username':username,
+                             'password':password}).encode(),
+            headers={'Content-Type':'application/json'},method='POST')
+        with urllib.request.urlopen(req,timeout=5) as res:
+            cookie=res.headers['Set-Cookie'].split(';',1)[0]
+            csrf=json.load(res)['csrf']
+        AUTH[base]=(cookie,csrf)
+    headers={'Content-Type':'application/json'}
+    if base in AUTH:
+        cookie,csrf=AUTH[base]
+        headers.update({'Cookie':cookie,'X-DFM-CSRF':csrf})
     body=json.dumps(data).encode() if data is not None else None
-    req=urllib.request.Request(base+path, data=body, headers={'Content-Type':'application/json'},
+    req=urllib.request.Request(base+path,data=body,headers=headers,
             method='POST' if data is not None else 'GET')
     try:
         with urllib.request.urlopen(req,timeout=5) as resp:
-            return resp.status, json.load(resp)
+            return resp.status,json.load(resp)
     except urllib.error.HTTPError as exc:
-        return exc.code, json.loads(exc.read())
+        return exc.code,json.loads(exc.read())
 
 
 @pytest.fixture
@@ -35,7 +54,7 @@ def running(setup):
     with socket.socket() as s:
         s.bind(('127.0.0.1',0));port=s.getsockname()[1]
     env=os.environ.copy()
-    env.update(DB_PATH=db,SCAN_ROOTS=':'.join(roots),HTTP_PORT=str(port),SCAN_BANDWIDTH_MBPS='0',SCAN_FILE_WORKERS='2',REQUIRE_CIFS_MOUNTS='false')
+    env.update(DB_PATH=db,SCAN_ROOTS=':'.join(roots),HTTP_PORT=str(port),SCAN_BANDWIDTH_MBPS='0',SCAN_FILE_WORKERS='2',REQUIRE_CIFS_MOUNTS='false',DFM_SETUP_TOKEN='test-setup-token-for-dfm-ci-1234567890',DFM_COOKIE_SECURE='false',DFM_METRICS_TOKEN=METRICS_TOKEN)
     proc=subprocess.Popen([sys.executable,'-u',str(APP/'app/main.py')],cwd=str(APP),env=env,
             stdout=subprocess.DEVNULL,stderr=subprocess.STDOUT)
     base='http://127.0.0.1:'+str(port)
@@ -65,7 +84,7 @@ def wait_scan(base, n=1):
 
 def test_http_startup_readonly_status_and_schedules(running):
     base,roots,db=running
-    assert request(base,'/api/startup')[1]['version']=='0.6.3'
+    assert request(base,'/api/startup')[1]['version']=='0.6.4'
     status=request(base,'/api/status')[1]
     assert status['files']==9 and status['duplicates']==3
     assert status['quick_available']
@@ -297,7 +316,7 @@ def test_monitoring_api_mqtt_settings_and_prometheus(running):
     c=connect(db,readonly=True)
     try: assert json.loads(read_meta(c,'mqtt_settings_json'))['password']=='test-private'
     finally:c.close()
-    with urllib.request.urlopen(base+'/metrics',timeout=5) as response:
+    with urllib.request.urlopen(urllib.request.Request(base+'/metrics',headers={'Authorization':'Bearer '+METRICS_TOKEN}),timeout=5) as response:
         payload=response.read().decode()
         assert 'dfm_duplicate_copies 3\n' in payload
         assert 'dfm_last_scan_removed 0\n' in payload
