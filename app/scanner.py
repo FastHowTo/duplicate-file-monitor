@@ -789,10 +789,17 @@ def _hash_candidate_pages(c, predicate, params, stage, control, scan_id):
             if skipped:
                 with c:
                     for item in skipped:
-                        old=c.execute('SELECT 1 FROM files WHERE root=? AND path=?',
+                        old=c.execute('SELECT size,mtime_ns,dev,inode FROM files WHERE root=? AND path=?',
                             (item['root'],item['path'])).fetchone()
+                        observed=c.execute('SELECT size,mtime_ns,dev,inode FROM work_files WHERE path=?',
+                            (item['path'],)).fetchone()
                         if old:
                             _preserve_existing(c,item['root'],item['path'])
+                            # An older verified hash is not proof of the new
+                            # content if metadata has changed since that hash.
+                            if observed and tuple(old)!=tuple(observed):
+                                c.execute('UPDATE work_files SET partial=NULL,full=NULL WHERE path=?',
+                                          (item['path'],))
                         else:
                             c.execute('UPDATE work_files SET partial=NULL,full=NULL WHERE path=?',
                                       (item['path'],))
