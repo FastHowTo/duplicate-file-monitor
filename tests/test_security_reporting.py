@@ -107,3 +107,54 @@ def test_unscanned_volume_not_in_report(tmp_path):
         assert report['totals']['file_delta']==0
     finally:
         c.close()
+
+@pytest.mark.skipif(hasattr(os,'geteuid') and os.geteuid()==0,reason='root ignores Unix directory permissions')
+def test_unreadable_subdirectory_preserves_previous_inventory(tmp_path):
+    root=tmp_path/'source'
+    secret=root/'private'
+    secret.mkdir(parents=True)
+    (secret/'secret.bin').write_bytes(b'duplicate'*1024)
+    (root/'visible.bin').write_bytes(b'duplicate'*1024)
+    db=str(tmp_path/'inventory.sqlite3')
+    first=scanner.scan(db,[str(root)],scanner.ScanControl(0,2))
+    assert first['status']=='success'
+    lifetime=first['lifetime_space_saved']
+    secret.chmod(0)
+    try:
+        second=scanner.scan(db,[str(root)],scanner.ScanControl(0,2))
+    finally:
+        secret.chmod(0o700)
+    assert second['status']=='success'
+    assert second['warning_count']>=1
+    assert second['changes']['removed']==0
+    assert second['lifetime_space_saved']==lifetime
+    c=scanner.connect(db,readonly=True)
+    try:
+        assert c.execute('SELECT COUNT(*) FROM files').fetchone()[0]==2
+        sid=c.execute('SELECT MAX(id) FROM scans').fetchone()[0]
+        report=scanner.read_scan_report(c,sid)
+        assert any(w['path']==str(secret) for w in report['warnings'])
+    finally:
+        c.close()
+
+def test_historical_report_remains_unchanged(tmp_path):
+    root=tmp_path/'source'
+    root.mkdir()
+    (root/'first').write_bytes(b'A'*4096)
+    db=str(tmp_path/'data.sqlite3')
+    scanner.scan(db,[str(root)],scanner.ScanControl(0,2))
+    c=scanner.connect(db,readonly=True)
+    try:
+        first_report=scanner.read_scan_report(c,1)
+    finally:
+        c.close()
+    (root/'second').write_bytes(b'A'*4096)
+    scanner.scan(db,[str(root)],scanner.ScanControl(0,2),mode='quick')
+    c=scanner.connect(db,readonly=True)
+    try:
+        assert scanner.read_scan_report(c,1)==first_report
+        second_report=scanner.read_scan_report(c,2)
+        assert second_report['totals']['file_count']==2
+        assert second_report['totals']['file_delta']==1
+    finally:
+        c.close()
