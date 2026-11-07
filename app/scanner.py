@@ -762,18 +762,41 @@ def _hash_candidate_pages(c, predicate, params, stage, control, scan_id):
                 control.set_progress(volume=rows[-1]['root'])
             field = 'partial' if stage == 'partial_hashing' else 'full'
             needed = [row for row in rows if row[field] is None]
-            futures = [executor.submit(_compute_candidate, row, control, stage)
-                       for row in needed]
-            outputs = []
-            first_error = None
+            futures={executor.submit(_compute_candidate,row,control,stage):row
+                     for row in needed}
+            outputs=[]
+            skipped=[]
+            first_error=None
             for future in as_completed(futures):
+                row=futures[future]
                 try:
                     outputs.append(future.result())
                 except Exception as exc:
-                    if first_error is None:
-                        first_error = exc
-            # Preserve successful work even if a different worker failed.
-            _save_hash_batch(c, outputs, stage, control)
+                    if _recoverable(exc):
+                        try:
+                            time.sleep(0.05)
+                            outputs.append(_compute_candidate(row,control,stage))
+                            continue
+                        except Exception as retry:
+                            exc=retry
+                    if _recoverable(exc):
+                        skipped.append({'root':row['root'],'path':row['path'],
+                            'category':'unstable_or_unreadable_file',
+                            'message':str(exc),'created':time.time()})
+                    elif first_error is None:
+                        first_error=exc
+            _save_hash_batch(c,outputs,stage,control)
+            if skipped:
+                with c:
+                    for item in skipped:
+                        old=c.execute('SELECT 1 FROM files WHERE root=? AND path=?',
+                            (item['root'],item['path'])).fetchone()
+                        if old:
+                            _preserve_existing(c,item['root'],item['path'])
+                        else:
+                            c.execute('UPDATE work_files SET partial=NULL,full=NULL WHERE path=?',
+                                      (item['path'],))
+                _save_warnings(c,scan_id,skipped,control)
             if stage == 'partial_hashing':
                 control.add_progress(partial_files_checked=len(rows))
             else:
@@ -925,6 +948,7 @@ def _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics=None):
     condition = threading.Condition()
     written = Queue(maxsize=max(4,control.file_workers*2))
     errors = []
+    skipped = []
     task_failures = []
     worker_count = control.file_workers
     last_root = -1
@@ -963,11 +987,15 @@ def _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics=None):
                 batch = []
                 discovered_dirs = []
                 try:
-                    control.set_progress(volume=root)
+                    control.set_progress(volume=root,current_path=directory)
+                    control.add_progress(directories_visited=1)
                     with os.scandir(directory) as entries:
                         for entry in entries:
                             control.check()
                             try:
+                                if _ignored(entry.path,root):
+                                    skipped.append({'root':root,'path':entry.path,'category':'excluded','message':'Excluded by SCAN_IGNORE','created':time.time()})
+                                    continue
                                 if entry.is_dir(follow_symlinks=False):
                                     discovered_dirs.append(entry.path)
                                     # Let idle workers take subdirectories early.
@@ -986,11 +1014,15 @@ def _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics=None):
                                             written.put(batch)
                                             batch=[]
                             except OSError as exc:
-                                errors.append(f'{entry.path}: {exc}')
+                                (skipped if _recoverable(exc) else errors).append(
+                                    {'root':root,'path':entry.path,'category':'inaccessible_file','message':str(exc),'created':time.time()}
+                                    if _recoverable(exc) else f'{entry.path}: {exc}')
                     if batch:
                         written.put(batch)
                 except OSError as exc:
-                    errors.append(f'{directory}: {exc}')
+                    (skipped if _recoverable(exc) else errors).append(
+                        {'root':root,'path':directory,'category':'inaccessible_directory','message':str(exc),'created':time.time()}
+                        if _recoverable(exc) else f'{directory}: {exc}')
                 finally:
                     with condition:
                         if discovered_dirs:
@@ -1054,7 +1086,7 @@ def _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics=None):
         raise write_error
     if task_failures:
         raise task_failures[0]
-    return count,errors
+    return count,errors,skipped
 
 
 def _changes_since_published(c, root):
@@ -1375,13 +1407,16 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
         _set_stage(c, scan_id, 'enumerating', control)
         discovery_metrics = (_ScopedDiscoveryMetrics(c,rootlist,control, bool(preserved_roots))
                              if mode == 'quick' else None)
-        count, errors = _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics)
+        count, errors, skipped = _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics)
         # Drop cached baseline dictionaries and group ledgers before expensive
         # comparison work; the authoritative staged SQL rows remain in memory.
         del discovery_metrics
         if errors:
             raise RuntimeError('Enumeration failed; completed inventory unchanged: '
                                + '; '.join(errors[:5]))
+        for item in skipped:
+            _preserve_existing(c,item['root'],item['path'],item['category'] in ('excluded','inaccessible_directory'))
+        _save_warnings(c,scan_id,skipped,control)
         if require_mounts:
             validate_cifs_mounts(rootlist)
         # Do not reject legitimate deletions based on the magnitude of an
