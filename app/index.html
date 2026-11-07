@@ -315,7 +315,7 @@ function progressRender(s){lastStatus=s;const active=!!s.scanning,p=active?s.pro
     else if(cleaning){$('stage-name').textContent='Cleaning up';detailsLines(['Finishing database cleanup…']);}
     else if(stopping){$('stage-name').textContent='Stopping scan';detailsLines(['Stop requested. Finishing active work…']);}
     else if(preparing){$('stage-name').textContent='Preparing scan';detailsLines([p?.preparing_step||'Preparing inventory…']);}
-    else if(p.stage==='enumerating'){$('stage-name').textContent='File Discovery';const line=document.createElement('span');line.textContent='Discovering files';const dots=document.createElement('span');dots.id='discovery-dots';dots.className='discovery-dots';dots.textContent='.'.repeat(discoveryDot);$('stage-details').replaceChildren(line,dots)}
+    else if(p.stage==='enumerating'){$('stage-name').textContent='File Discovery';const line=document.createElement('span');line.textContent='Discovering files · '+fmt(p.directories_visited||0)+' directories visited · '+(p.current_path||'');const dots=document.createElement('span');dots.id='discovery-dots';dots.className='discovery-dots';dots.textContent='.'.repeat(discoveryDot);$('stage-details').replaceChildren(line,dots)}
     else{const st=stageProgress(p);$('stage-name').textContent=st.name;meter.hidden=false;fill.style.width=Math.max(0,Math.min(100,st.pct)).toFixed(1)+'%';$('stage-pct').textContent=st.pct.toFixed(1)+'%';detailsLines(st.lines)}
   }else if(s.status==='success'){$('stage-name').textContent=reportStatus(s.status,s.warning_count||0);meter.hidden=false;fill.style.width='100%';$('stage-pct').textContent='100%';detailsLines([s.warning_count?('Scan completed with '+s.warning_count+' recoverable warnings'):'Scan completed successfully'])}
   else if(s.status==='failed'||s.status==='cancelled'||s.status==='interrupted'){
@@ -629,7 +629,9 @@ async function refresh(){if(stateBusy)return;stateBusy=true;try{
   for(const item of h.slice(0,30)){
     const tr=document.createElement('tr'),isActive=s.scanning&&item.id===s.progress?.scan_id;
     cell(tr,date(item.started));cell(tr,((item.mode||'full')==='quick'?'Quick':'Full')+(item.scope&&item.scope.length===1?' · '+item.scope[0].split('/').pop():item.scope&&item.scope.length>1?' · '+item.scope.length+' volumes':''));
-    const st=cell(tr,isActive?'running':item.status);if(item.error&&!isActive)st.title=item.error;
+    const st=cell(tr,isActive?'Running':reportStatus(item.status,item.warning_count||0));
+    if(!isActive){st.style.color=reportColor(item.status,item.warning_count||0)}
+    if(item.error&&!isActive)st.title=item.error;
     // Historical records are immutable snapshots. Never substitute current totals.
     cell(tr,fmt(item.files),'num');cell(tr,fmt(item.duplicates),'num');cell(tr,bytes(item.wasted),'num');
     const t=cell(tr,item.started==null?'—':duration(Math.max(0,(isActive?Date.now()/1000:(item.ended??(item.status==='running'?Date.now()/1000:item.started)))-item.started)),'num');
@@ -642,7 +644,7 @@ async function refresh(){if(stateBusy)return;stateBusy=true;try{
       for(const vol of item.volumes){const line=document.createElement('div');line.className='tiny';
         line.textContent=`${vol.root.split('/').pop()||vol.root}: ${fmt(vol.file_count)} files · ${vol.duplicate_copies==null?'—':fmt(vol.duplicate_copies)} duplicates`;
         disclosure.append(line)}details.append(disclosure)}
-    if(!s.scanning || item.status!=='running')details.append(makeReportLink(item.id));
+    if(!isActive&&item.status!=='running')details.append(makeReportLink(item.id));
     history.append(tr)
   }
   if(!h.length){const tr=document.createElement('tr');cell(tr,'No scans yet.');history.append(tr)}
