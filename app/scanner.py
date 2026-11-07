@@ -4,6 +4,8 @@ Source files are never modified. The completed inventory is kept separately from
 an in-progress scan; only a fully validated scan can replace it or accrue savings.
 """
 import hashlib
+import errno
+import fnmatch
 from collections import deque
 from queue import Queue, Empty
 import struct
@@ -69,6 +71,9 @@ CREATE INDEX IF NOT EXISTS work_partial_idx ON work_files(size,partial);
 CREATE INDEX IF NOT EXISTS work_samples_idx ON work_files(size,samples);
 -- Efficient live lookups for exact, fully fingerprinted duplicate copies.
 CREATE INDEX IF NOT EXISTS work_full_idx ON work_files(size,full) WHERE full IS NOT NULL;
+CREATE TABLE IF NOT EXISTS scan_reports(scan_id INTEGER PRIMARY KEY, report_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS scan_warnings(id INTEGER PRIMARY KEY,scan_id INTEGER NOT NULL,root TEXT NOT NULL,path TEXT NOT NULL,category TEXT NOT NULL,message TEXT NOT NULL,created REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS warning_scan_idx ON scan_warnings(scan_id);
 CREATE TABLE IF NOT EXISTS scan_progress(
   id INTEGER PRIMARY KEY CHECK(id=1), scan_id INTEGER, stage TEXT,
   file_count INTEGER DEFAULT 0, candidates INTEGER DEFAULT 0,
@@ -111,14 +116,14 @@ def _current_schema_readonly(db):
     try:
         required = {'files','scans','meta','volume_scans','excluded_roots',
                     'invalid_baselines','hash_cache','partial_cache',
-                    'work_files','scan_progress'}
+                    'work_files','scan_progress','scan_reports','scan_warnings'}
         present = {row[0] for row in c.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         if not required.issubset(present):
             return False
         scans = {row[1] for row in c.execute('PRAGMA table_info(scans)')}
         vols = {row[1] for row in c.execute('PRAGMA table_info(volume_scans)')}
-        if not {'mode','progress_json','changes_json'}.issubset(scans):
+        if not {'mode','progress_json','changes_json','warning_count'}.issubset(scans):
             return False
         if not {'modified','possible_moves','added','removed','duplicate_copies','wasted_bytes'}.issubset(vols):
             return False
@@ -147,6 +152,8 @@ def initialize_database(db):
             cols = {r[1] for r in c.execute('PRAGMA table_info(volume_scans)')}
             scan_cols = {r[1] for r in c.execute('PRAGMA table_info(scans)')}
             with c:
+                if 'warning_count' not in scan_cols:
+                    c.execute('ALTER TABLE scans ADD COLUMN warning_count INTEGER NOT NULL DEFAULT 0')
                 if 'mode' not in scan_cols:
                     c.execute("ALTER TABLE scans ADD COLUMN mode TEXT NOT NULL DEFAULT 'full'")
                 if 'progress_json' not in scan_cols:
@@ -358,6 +365,68 @@ def validate_cifs_mounts(roots):
             raise RuntimeError(f'Scan root is inaccessible: {root}: {exc}') from exc
 
 
+RECOVERABLE_ERRNOS = {errno.EACCES,errno.EPERM,errno.ENOENT,errno.ENOTDIR,errno.EISDIR}
+def _recoverable(exc):
+    if isinstance(exc,OSError):
+        return exc.errno in RECOVERABLE_ERRNOS
+    return isinstance(exc,RuntimeError) and str(exc).startswith(
+        ('File changed since enumeration:','File changed during hashing:','Unexpected EOF:'))
+
+def _ignored(path,root):
+    relative=os.path.relpath(path,root)
+    return any(fnmatch.fnmatch(os.path.basename(path),p.strip()) or fnmatch.fnmatch(relative,p.strip())
+               for p in os.getenv('SCAN_IGNORE','').split(':') if p.strip())
+
+def _preserve_existing(c,root,path,directory=False):
+    if directory:
+        prefix=path.rstrip('/')+'/'
+        c.execute("""INSERT OR IGNORE INTO work_files
+            (path,root,size,mtime_ns,dev,inode,partial,samples,full)
+            SELECT path,root,size,mtime_ns,dev,inode,partial,NULL,full
+            FROM files WHERE root=? AND (path=? OR substr(path,1,?)=?)""",
+            (root,path,len(prefix),prefix))
+    else:
+        # Never use INSERT OR REPLACE here: replacing an existing row changes
+        # its rowid, which may cause rowid-paginated hashing to revisit an
+        # unstable candidate indefinitely.
+        c.execute("""INSERT OR IGNORE INTO work_files
+            (path,root,size,mtime_ns,dev,inode,partial,samples,full)
+            SELECT path,root,size,mtime_ns,dev,inode,partial,NULL,full
+            FROM files WHERE root=? AND path=?""",(root,path))
+        c.execute("""UPDATE work_files SET
+            (root,size,mtime_ns,dev,inode,partial,samples,full)=
+            (SELECT root,size,mtime_ns,dev,inode,partial,NULL,full
+             FROM files WHERE root=? AND path=?)
+            WHERE path=? AND EXISTS(SELECT 1 FROM files WHERE root=? AND path=?)""",
+            (root,path,path,root,path))
+
+
+def _save_warnings(c,scan_id,items,control):
+    if not items: return
+    with c:
+        c.executemany("""INSERT INTO scan_warnings(scan_id,root,path,category,message,created)
+            VALUES(?,?,?,?,?,?)""",[(scan_id,w['root'],w['path'],w['category'],
+            w['message'],w['created']) for w in items])
+    control.add_progress(warning_count=len(items))
+    for w in items:
+        print('SCAN WARNING: '+json.dumps(w,ensure_ascii=False),flush=True)
+
+def read_scan_report(c,scan_id):
+    record=c.execute('SELECT report_json FROM scan_reports WHERE scan_id=?',(scan_id,)).fetchone()
+    return json.loads(record['report_json']) if record else None
+
+def _previous_snapshot(c,root):
+    row=c.execute("""SELECT s.ended,v.file_count,v.duplicate_copies,v.wasted_bytes,r.report_json
+         FROM volume_scans v JOIN scans s ON s.id=v.scan_id
+         LEFT JOIN scan_reports r ON r.scan_id=s.id
+         WHERE v.root=? AND s.status='success' ORDER BY s.id DESC LIMIT 1""",(root,)).fetchone()
+    if not row: return None
+    result=dict(row)
+    data=json.loads(result.pop('report_json') or '{}')
+    result['total_size_bytes']=next((v.get('total_size_bytes')
+            for v in data.get('volumes',()) if v['root']==root),None)
+    return result
+
 class ScanCancelled(Exception):
     pass
 
@@ -403,6 +472,7 @@ class ScanControl:
             'io_files': 0, 'io_open_seconds': 0.0, 'io_seek_seconds': 0.0,
             'io_read_seconds': 0.0, 'io_hash_seconds': 0.0,
             'io_throttle_seconds': 0.0, 'io_stat_seconds': 0.0,
+            'warning_count': 0, 'directories_visited': 0, 'current_path': '',
         }
         self.set_bandwidth(bandwidth_mbps)
 
@@ -702,18 +772,48 @@ def _hash_candidate_pages(c, predicate, params, stage, control, scan_id):
                 control.set_progress(volume=rows[-1]['root'])
             field = 'partial' if stage == 'partial_hashing' else 'full'
             needed = [row for row in rows if row[field] is None]
-            futures = [executor.submit(_compute_candidate, row, control, stage)
-                       for row in needed]
-            outputs = []
-            first_error = None
+            futures={executor.submit(_compute_candidate,row,control,stage):row
+                     for row in needed}
+            outputs=[]
+            skipped=[]
+            first_error=None
             for future in as_completed(futures):
+                row=futures[future]
                 try:
                     outputs.append(future.result())
                 except Exception as exc:
-                    if first_error is None:
-                        first_error = exc
-            # Preserve successful work even if a different worker failed.
-            _save_hash_batch(c, outputs, stage, control)
+                    if _recoverable(exc):
+                        try:
+                            time.sleep(0.05)
+                            outputs.append(_compute_candidate(row,control,stage))
+                            continue
+                        except Exception as retry:
+                            exc=retry
+                    if _recoverable(exc):
+                        skipped.append({'root':row['root'],'path':row['path'],
+                            'category':'unstable_or_unreadable_file',
+                            'message':str(exc),'created':time.time()})
+                    elif first_error is None:
+                        first_error=exc
+            _save_hash_batch(c,outputs,stage,control)
+            if skipped:
+                with c:
+                    for item in skipped:
+                        old=c.execute('SELECT size,mtime_ns,dev,inode FROM files WHERE root=? AND path=?',
+                            (item['root'],item['path'])).fetchone()
+                        observed=c.execute('SELECT size,mtime_ns,dev,inode FROM work_files WHERE path=?',
+                            (item['path'],)).fetchone()
+                        if old:
+                            _preserve_existing(c,item['root'],item['path'])
+                            # An older verified hash is not proof of the new
+                            # content if metadata has changed since that hash.
+                            if observed and tuple(old)!=tuple(observed):
+                                c.execute('UPDATE work_files SET partial=NULL,full=NULL WHERE path=?',
+                                          (item['path'],))
+                        else:
+                            c.execute('UPDATE work_files SET partial=NULL,full=NULL WHERE path=?',
+                                      (item['path'],))
+                _save_warnings(c,scan_id,[v for v in skipped if v['category']!='excluded'],control)
             if stage == 'partial_hashing':
                 control.add_progress(partial_files_checked=len(rows))
             else:
@@ -865,6 +965,7 @@ def _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics=None):
     condition = threading.Condition()
     written = Queue(maxsize=max(4,control.file_workers*2))
     errors = []
+    skipped = []
     task_failures = []
     worker_count = control.file_workers
     last_root = -1
@@ -903,11 +1004,15 @@ def _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics=None):
                 batch = []
                 discovered_dirs = []
                 try:
-                    control.set_progress(volume=root)
+                    control.set_progress(volume=root,current_path=directory)
+                    control.add_progress(directories_visited=1)
                     with os.scandir(directory) as entries:
                         for entry in entries:
                             control.check()
                             try:
+                                if _ignored(entry.path,root):
+                                    skipped.append({'root':root,'path':entry.path,'category':'excluded','message':'Excluded by SCAN_IGNORE','created':time.time()})
+                                    continue
                                 if entry.is_dir(follow_symlinks=False):
                                     discovered_dirs.append(entry.path)
                                     # Let idle workers take subdirectories early.
@@ -926,11 +1031,15 @@ def _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics=None):
                                             written.put(batch)
                                             batch=[]
                             except OSError as exc:
-                                errors.append(f'{entry.path}: {exc}')
+                                (skipped if _recoverable(exc) else errors).append(
+                                    {'root':root,'path':entry.path,'category':'inaccessible_file','message':str(exc),'created':time.time()}
+                                    if _recoverable(exc) else f'{entry.path}: {exc}')
                     if batch:
                         written.put(batch)
                 except OSError as exc:
-                    errors.append(f'{directory}: {exc}')
+                    (skipped if _recoverable(exc) else errors).append(
+                        {'root':root,'path':directory,'category':'inaccessible_directory','message':str(exc),'created':time.time()}
+                        if _recoverable(exc) else f'{directory}: {exc}')
                 finally:
                     with condition:
                         if discovered_dirs:
@@ -994,7 +1103,7 @@ def _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics=None):
         raise write_error
     if task_failures:
         raise task_failures[0]
-    return count,errors
+    return count,errors,skipped
 
 
 def _changes_since_published(c, root):
@@ -1315,13 +1424,16 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
         _set_stage(c, scan_id, 'enumerating', control)
         discovery_metrics = (_ScopedDiscoveryMetrics(c,rootlist,control, bool(preserved_roots))
                              if mode == 'quick' else None)
-        count, errors = _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics)
+        count, errors, skipped = _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics)
         # Drop cached baseline dictionaries and group ledgers before expensive
         # comparison work; the authoritative staged SQL rows remain in memory.
         del discovery_metrics
         if errors:
             raise RuntimeError('Enumeration failed; completed inventory unchanged: '
                                + '; '.join(errors[:5]))
+        for item in skipped:
+            _preserve_existing(c,item['root'],item['path'],item['category'] in ('excluded','inaccessible_directory'))
+        _save_warnings(c,scan_id,skipped,control)
         if require_mounts:
             validate_cifs_mounts(rootlist)
         # Do not reject legitimate deletions based on the magnitude of an
@@ -1498,6 +1610,9 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
         control.finalizing('Preparing per-volume scan history')
         per_root = {r['root']: r['n'] for r in c.execute('''SELECT root,COUNT(*) n
                                                              FROM work_files GROUP BY root''')}
+        size_roots={r['root']:r['total'] for r in c.execute(
+            'SELECT root,COALESCE(SUM(size),0) total FROM work_files GROUP BY root')}
+        previous_roots={root:_previous_snapshot(c,root) for root in rootlist}
         per_changes = {}
         for root in rootlist:
             per_root.setdefault(root, 0)
@@ -1516,6 +1631,34 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
         root_dupes = _snapshot_volume_duplicate_metrics(c, rootlist)
         volume_metrics_seconds = round(time.monotonic() - volume_metrics_started, 3)
         control.check()
+        warning_rows=[dict(w) for w in c.execute(
+            'SELECT root,path,category,message,created FROM scan_warnings WHERE scan_id=? ORDER BY id',
+            (scan_id,))]
+        report_volumes=[]
+        for root in rootlist:
+            previous=previous_roots[root]
+            copies,space=root_dupes[root]
+            size_bytes=size_roots.get(root,0)
+            def diff(key,current):
+                return current-previous[key] if previous is not None and previous[key] is not None else None
+            report_volumes.append({'root':root,'file_count':per_root[root],
+                'file_delta':diff('file_count',per_root[root]),
+                'total_size_bytes':size_bytes,'size_delta':diff('total_size_bytes',size_bytes),
+                'duplicate_copies':copies,'duplicate_delta':diff('duplicate_copies',copies),
+                'wasted_bytes':space,'wasted_delta':diff('wasted_bytes',space),
+                'previous_scan_at':previous['ended'] if previous else None})
+        def sum_metric(key):
+            return sum(v[key] for v in report_volumes)
+        def sum_diff(key):
+            return sum(v[key] for v in report_volumes) if all(v[key] is not None for v in report_volumes) else None
+        total_row={'root':'Selected volumes total','file_count':sum_metric('file_count'),
+            'file_delta':sum_diff('file_delta'),'total_size_bytes':sum_metric('total_size_bytes'),
+            'size_delta':sum_diff('size_delta'),'duplicate_copies':sum_metric('duplicate_copies'),
+            'duplicate_delta':sum_diff('duplicate_delta'),'wasted_bytes':sum_metric('wasted_bytes'),
+            'wasted_delta':sum_diff('wasted_delta'),'previous_scan_at':None}
+        report_data={'scan_id':scan_id,'status':'success','started':start,
+            'ended':None,'duration_seconds':None,'mode':mode,'roots':rootlist,
+            'volumes':report_volumes,'totals':total_row,'warnings':warning_rows,'error':''}
         control.begin_finalizing()  # cancellation closes only at atomic publish
         control.finalizing('Committing changed inventory records and scan history')
         print('Finalizing: publishing inventory delta and committing scan history',flush=True)
@@ -1578,11 +1721,17 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
                                   files_indexed=count, files_discovered=count,
                                   confirmed_duplicate_copies=dupes,
                                   confirmed_wasted_bytes=wasted)
-            c.execute('''UPDATE scans SET ended=?,status='success',error='',files=?,
-                         duplicates=?,wasted=?,lifetime=?,progress_json=?,changes_json=?
-                         WHERE id=?''',
-                      (ended,count,dupes,wasted,lifetime,
-                       json.dumps(final_progress),json.dumps(change_totals),scan_id))
+            warning_count=len(warning_rows)
+            final_progress['warning_count']=warning_count
+            report_data['ended']=ended
+            report_data['duration_seconds']=round(ended-start,2)
+            c.execute('INSERT INTO scan_reports(scan_id,report_json) VALUES(?,?)',
+                      (scan_id,json.dumps(report_data)))
+            c.execute("""UPDATE scans SET ended=?,status='success',error='',files=?,
+                          duplicates=?,wasted=?,lifetime=?,progress_json=?,changes_json=?,warning_count=?
+                          WHERE id=?""",
+                       (ended,count,dupes,wasted,lifetime,
+                        json.dumps(final_progress),json.dumps(change_totals),warning_count,scan_id))
         # The success row and published data are in the same committed
         # transaction. There is no second transaction that can leave the UI
         # showing an earlier completed duration while the run is still active.
@@ -1595,7 +1744,7 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
         publication_timings['finalization_total_seconds'] = round(time.monotonic() - finalization_started, 3)
         print('Finalization timings: ' + json.dumps(publication_timings), flush=True)
         control.set_progress(**final_progress)
-        result = {'status':'success','files_scanned':count,'scan_scope':rootlist,
+        result = {'status':'success','warning_count':len(warning_rows),'files_scanned':count,'scan_scope':rootlist,
                   'scan_duplicates_count':dupes,'scan_wasted_space':wasted,
                   'current_duplicates_count':global_dupes,'current_wasted_space':global_wasted,
                   'lifetime_space_saved':lifetime,
@@ -1617,10 +1766,20 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
                 # so diagnostic recording cannot accidentally commit partial work.
                 c.rollback()
                 with c:
-                    c.execute('''UPDATE scans SET ended=?,status=?,error=?,progress_json=?
-                                 WHERE id=?''',
-                              (time.time(),status,str(exc)[:2000],
-                               json.dumps(control.snapshot()),scan_id))
+                    ended_at=time.time()
+                    warnings=[dict(w) for w in c.execute(
+                        'SELECT root,path,category,message,created FROM scan_warnings WHERE scan_id=? ORDER BY id',
+                        (scan_id,))]
+                    diagnostics={'scan_id':scan_id,'status':status,'started':start,
+                        'ended':ended_at,'duration_seconds':round(ended_at-start,2),
+                        'mode':mode,'roots':rootlist,'volumes':[],'totals':None,
+                        'warnings':warnings,'error':str(exc)[:2000]}
+                    c.execute('INSERT OR REPLACE INTO scan_reports(scan_id,report_json) VALUES(?,?)',
+                              (scan_id,json.dumps(diagnostics)))
+                    c.execute('''UPDATE scans SET ended=?,status=?,error=?,progress_json=?,warning_count=?
+                                  WHERE id=?''',
+                               (ended_at,status,str(exc)[:2000],
+                                json.dumps(control.snapshot()),len(warnings),scan_id))
             except Exception as status_exc:
                 # Never hide the original failure with a secondary SQLite error.
                 print('Could not record scan failure: ' + repr(status_exc), flush=True)

@@ -60,9 +60,9 @@ header{padding:20px max(22px,calc((100vw - 1290px)/2));border-bottom:1px solid #
 h1{font-size:1.55rem;margin:0}h2{font-size:1.14rem;margin:0}.muted{color:#a6b7ce}.tiny{font-size:.82rem}.tag{font-size:.86rem;color:#a6b7ce}
 main{max-width:1330px;margin:auto;padding:24px}.panel{background:#151f30;border:1px solid #2d3d53;border-radius:11px;padding:19px;margin:16px 0}
 .sectiontop{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:15px}.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-header .actions{display:grid;grid-template-columns:124px 295px 116px 116px 95px 95px 110px;align-items:center;gap:8px;justify-content:end}
+header .actions{display:grid;grid-template-columns:auto 295px 116px 116px 95px 95px 110px 85px;align-items:center;gap:8px;justify-content:end}
 header .actions>button{width:100%;white-space:nowrap}
-header #state{width:124px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header #state{min-width:124px;text-align:center;white-space:normal}
 header #scope-control{width:295px;min-width:0}
 header #scope-picker{width:205px;min-width:0}
 header .actions>button[hidden]{display:block!important;visibility:hidden;pointer-events:none}
@@ -72,7 +72,7 @@ button{border:0;border-radius:7px;background:#3979e6;color:white;font:inherit;fo
 button.scan-action:not(:disabled):hover{filter:brightness(1.14)}button.scan-quick:not(:disabled){background:#197f72}button:active:not(:disabled){transform:translateY(1px)}button.secondary{background:#334763}button.danger{background:#963d45}button:disabled{opacity:.38;filter:grayscale(1);cursor:not-allowed}
 button.saving{background:#49647d}button.saved{background:#19764e}button.save-error{background:#b53a40}
 input,select{border:1px solid #40536d;background:#0d1728;color:white;padding:9px 11px;border-radius:8px;font:inherit;max-width:100%}input[type=number]{width:130px}input[type=search]{width:min(430px,100%)}label{font-size:.93rem}
-#state{padding:7px 14px;background:#27364b;border-radius:99px;font-size:.9rem}.status-good{background:#184b3a!important;color:#a5efcc}.status-bad{background:#65313a!important;color:#ffb6b1}
+#state{padding:7px 14px;background:#27364b;border-radius:99px;font-size:.9rem}.status-good{background:#184b3a!important;color:#a5efcc}.status-bad{background:#65313a!important;color:#ffb6b1}.status-warning{background:#73501a!important;color:#ffe0a0}.status-cancelled{background:#3e4654!important;color:#d0d6df}
 #message{min-height:1.3em;margin:4px 0}.error{color:#ff7777}.ok{color:#83d6b2}
 .metric-grid.global-summary-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.metric-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:15px}.stat{min-width:0;background:#1b2a3d;border:1px solid #2a3f58;border-radius:10px;padding:16px}
 .stat-label{color:#b1c2d6;font-size:.87rem}.stat-value{font-size:clamp(1.4rem,2.5vw,2.05rem);font-weight:750;margin-top:8px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
@@ -95,7 +95,7 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 </style></head><body class="starting">
 <header><div><h1>Duplicate File Monitor</h1><div class="muted tiny">Read-only file analysis · persistent results</div></div>
 <nav class="tabs" aria-label="Main navigation"><button class="selected" id="tab-dashboard">Dashboard</button><button id="tab-settings">Settings</button></nav>
-<div class="actions"><span id="state">Connecting…</span><div id="scope-control" hidden>Scan scope <details id="scope-picker"><summary id="scope-caption">All volumes</summary><div id="scope-checks" class="scope-checks"></div></details></div><button class="scan-action scan-quick" id="scan-quick" disabled title="Run a full scan first.">Quick Scan</button><button class="scan-action" id="scan">Full Scan</button><button class="secondary" id="pause" hidden>Pause</button><button class="secondary" id="resume" hidden>Resume</button><button class="danger" id="stop" disabled>Stop scan</button></div></header>
+<div class="actions"><span id="state">Connecting…</span><div id="scope-control" hidden>Scan scope <details id="scope-picker"><summary id="scope-caption">All volumes</summary><div id="scope-checks" class="scope-checks"></div></details></div><button class="scan-action scan-quick" id="scan-quick" disabled title="Run a full scan first.">Quick Scan</button><button class="scan-action" id="scan">Full Scan</button><button class="secondary" id="pause" hidden>Pause</button><button class="secondary" id="resume" hidden>Resume</button><button class="danger" id="stop" disabled>Stop scan</button><button class="secondary" id="logout">Logout</button></div></header>
 <section id="startup-screen" role="status" aria-live="polite">
 <div class="startup-icon" aria-hidden="true">▣</div>
 <h2 id="startup-title">Starting Duplicate File Monitor</h2>
@@ -112,7 +112,7 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 <div id="stage-details" aria-live="off" class="muted">Start a scan to discover duplicate files.</div>
 <div class="metric-grid"><div class="stat"><div class="stat-label">Files Discovered</div><div class="stat-value" id="live-files-discovered">—</div></div><div class="stat"><div class="stat-label" title="Confirmed redundant copies attributed to the scanned volume(s). One global reference copy per identical-content group is excluded.">Duplicates</div><div class="stat-value" id="scan-duplicates">—</div></div><div class="stat"><div class="stat-label" title="Storage occupied by confirmed redundant copies attributed to the scanned volume(s).">Wasted Space</div><div class="stat-value" id="scan-wasted">—</div></div></div>
 <div id="volume-progress" class="muted tiny" style="margin-top:12px" hidden></div>
-<div id="changes-summary" class="muted tiny" style="margin-top:14px" hidden></div>
+<div id="changes-summary" class="muted tiny" style="margin-top:14px" hidden></div><div id="current-report-link" class="tiny" style="margin-top:12px"></div>
 </section>
 <section class="panel" id="volume-summary-panel"><h2>Per-volume inventory</h2><p class="muted tiny">Current published inventory and last successful scan, not historical totals.</p><div class="scroll"><table><thead><tr><th>Volume</th><th class="num">Files</th><th class="num">Duplicates</th><th class="num">Wasted</th><th>Last scan</th></tr></thead><tbody id="volume-summary"></tbody></table></div></section>
 <section class="panel"><div class="sectiontop"><h2>Confirmed duplicate files <span class="muted tiny">(all volumes)</span></h2><div class="actions"><input type="search" id="filter" placeholder="Search filenames or full paths"><button class="secondary" id="search">Search</button></div></div>
@@ -124,7 +124,7 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 </section>
 <section class="panel" id="directory-matches-panel"><div class="sectiontop"><h2>Duplicate directory trees</h2><button class="secondary" id="directory-refresh">Analyze inventory</button></div><p class="muted tiny">Exact relative filename and subdirectory structure, confirmed matching SHA-256 contents. Highest matching directory trees only. This is a read-only report; directories containing unverified files are excluded.</p><div id="directory-summary" class="muted tiny">Select Analyze inventory to calculate matches.</div><div class="scroll"><table><thead><tr><th>Matching directory locations</th><th class="num" data-dir-sort="copies" tabindex="0" role="button">Copies <span class="sort-arrow"></span></th><th class="num" data-dir-sort="files_per_copy" tabindex="0" role="button">Files / copy <span class="sort-arrow"></span></th><th class="num" data-dir-sort="size_bytes_per_copy" tabindex="0" role="button">Logical size / copy <span class="sort-arrow"></span></th><th class="num" data-dir-sort="potential_savings_bytes" tabindex="0" role="button">Potential savings <span class="sort-arrow"></span></th></tr></thead><tbody id="directory-results"></tbody></table></div></section>
 
-<section class="panel"><div class="sectiontop"><h2>Scan history</h2><label>Volume <select id="history-root"><option value="all">All volumes</option></select></label></div><div class="scroll"><table><thead><tr><th>Started</th><th>Type</th><th>Status</th><th class="num">Files</th><th class="num">Duplicates</th><th class="num">Wasted</th><th class="num">Duration</th><th>Volume details</th></tr></thead><tbody id="history"><tr><td colspan="8">No scan history.</td></tr></tbody></table></div></section>
+<section class="panel"><div class="sectiontop"><h2>Scan history</h2><label>Volume <select id="history-root"><option value="all">All volumes</option></select></label></div><div class="scroll"><table><thead><tr><th>Started</th><th>Type</th><th>Status</th><th class="num">Files</th><th class="num">Duplicates</th><th class="num">Wasted</th><th class="num">Duration</th><th>Volume details / report</th></tr></thead><tbody id="history"><tr><td colspan="8">No scan history.</td></tr></tbody></table></div></section>
 <p id="disk-info" class="muted tiny"></p>
 <p class="muted tiny">Scanned source files are read-only. Duplicate File Monitor does not modify or remove original files.</p></main>
 <main id="settings-page" hidden>
@@ -150,7 +150,9 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 <section class="panel"><h2>Scan schedules</h2>
 <p class="muted tiny">All schedules are disabled unless explicitly enabled. Quick Scan requires a valid Full Scan baseline. Only one scan job runs at a time; simultaneous jobs are skipped or deferred as configured.</p>
 <div id="schedule-list"></div><div class="manage-row"><button class="secondary" id="schedule-add">Add schedule</button><button id="schedules-save">Apply Schedules</button><span id="schedules-feedback" class="muted tiny" role="status"></span></div>
-</section></main>
+</section>
+<section class="panel" id="auth-settings"><h2>Administrator account</h2><p class="muted tiny">Changing credentials signs out all existing sessions.</p><div class="manage-row"><label>New username <input id="auth-username" autocomplete="username"></label><label>Current password <input id="auth-current" type="password" autocomplete="current-password"></label><label>New password <input id="auth-new" type="password" autocomplete="new-password" minlength="12"></label><button id="auth-change">Change credentials</button><span id="auth-feedback" class="muted tiny"></span></div></section></main>
+<div id="report-overlay" hidden style="position:fixed;inset:0;z-index:100;background:#050b13e8;overflow:auto;padding:clamp(10px,4vw,48px)" role="dialog" aria-modal="true" aria-label="Scan report"><section class="panel" style="max-width:1120px;margin:auto"><div class="sectiontop"><h2>Scan report</h2><button id="report-close" class="secondary">Close</button></div><div id="report-content"></div></section></div>
 <footer class="muted tiny" style="text-align:center;padding:16px 24px;border-top:1px solid #2a3950">Duplicate File Monitor <span id="version">version loading…</span><span id="update-announcement" hidden> · <a id="update-link" target="_blank" rel="noopener noreferrer" href="https://github.com/FastHowTo/duplicate-file-monitor/releases">Update available</a></span></footer>
 <script>
 'use strict';
@@ -161,11 +163,45 @@ const date=n=>n?new Date(n*1000).toLocaleString():'—';
 const duration=s=>{if(s==null||!Number.isFinite(Number(s))||Number(s)<0)return '—';const n=Math.floor(Number(s));return `${String(Math.floor(n/3600)).padStart(2,'0')}:${String(Math.floor(n%3600/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`};
 const cell=(tr,value,cls)=>{const td=document.createElement('td');td.textContent=value;if(cls)td.className=cls;tr.append(td);return td};
 async function api(path,options={}){const r=await fetch(path,{cache:'no-store',...options});if(!r.ok){let msg=`HTTP ${r.status}`;try{msg=(await r.json()).error||msg}catch{}throw Error(msg)}return r.json()}
-const post=(path,obj)=>api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj||{})});
+let csrfToken=null;
+const post=(path,obj)=>api(path,{method:'POST',headers:{'Content-Type':'application/json','X-DFM-CSRF':csrfToken||''},body:JSON.stringify(obj||{})});
+async function loadAuth(){const data=await api('/api/auth/session');csrfToken=data.csrf;$('auth-username').value=data.username}
+$('logout').onclick=async()=>{try{await post('/api/auth/logout',{})}finally{location.replace('/login')}};
+$('auth-change').onclick=async()=>{try{
+ await post('/api/auth/change',{username:$('auth-username').value,current_password:$('auth-current').value,password:$('auth-new').value});
+ location.replace('/login');
+}catch(e){$('auth-feedback').textContent=e.message}};
+$('report-close').onclick=()=>{$('report-overlay').hidden=true};
+function reportStatus(status,count){if(status==='success')return count?'Completed with '+count+' warnings':'Completed';if(status==='failed'||status==='interrupted')return 'Failed';if(status==='cancelled')return 'Cancelled';return status}
+function reportColor(status,count){return status==='success'?(count?'#ffd595':'#a5efcc'):status==='failed'||status==='interrupted'?'#ffb6b1':status==='cancelled'?'#d0d6df':'#a6b7ce'}
+function metricDelta(n,unit=''){if(n==null)return '—';return (n>0?'+':'')+(unit==='bytes'?bytes(n):fmt(n))}
+function makeReportLink(scanId){const btn=document.createElement('button');btn.className='secondary';btn.textContent='View scan report';btn.onclick=()=>openReport(scanId);return btn}
+async function openReport(scanId){
+ const report=await api('/api/reports/'+encodeURIComponent(scanId));
+ const target=$('report-content');target.replaceChildren();
+ const status=document.createElement('p');
+ status.textContent=reportStatus(report.status,report.warnings?.length||0);
+ status.style.color=reportColor(report.status,report.warnings?.length||0);target.append(status);
+ const meta=document.createElement('p');meta.textContent=`Started: ${date(report.started)} · Finished: ${date(report.ended)} · Duration: ${duration(report.duration_seconds)} · Mode: ${report.mode} · Volumes: ${report.roots?.length||0}`;target.append(meta);
+ if(report.error){const p=document.createElement('p');p.className='error';p.textContent=report.error;target.append(p)}
+ const table=document.createElement('table');
+ const head=document.createElement('tr');
+ for(const label of ['Volume','Files','Δ files','Logical size','Δ size','Duplicates','Δ duplicates','Wasted','Δ wasted','Previous scan'])cell(head,label);
+ table.append(head);
+ for(const vol of [...(report.volumes||[]),...(report.totals?[report.totals]:[])]){
+  const tr=document.createElement('tr');
+  for(const val of [vol.root,fmt(vol.file_count),metricDelta(vol.file_delta),bytes(vol.total_size_bytes),metricDelta(vol.size_delta,'bytes'),fmt(vol.duplicate_copies),metricDelta(vol.duplicate_delta),bytes(vol.wasted_bytes),metricDelta(vol.wasted_delta,'bytes'),date(vol.previous_scan_at)])cell(tr,val);
+  table.append(tr);
+ }target.append(table);
+ const h=document.createElement('h3');h.textContent='Warnings ('+(report.warnings?.length||0)+')';target.append(h);
+ if(!report.warnings?.length){const p=document.createElement('p');p.textContent='No warnings recorded.';target.append(p)}
+ else for(const warning of report.warnings){const p=document.createElement('p');p.className='path';p.textContent=`[${warning.category}] ${warning.path}: ${warning.message}`;target.append(p)}
+ $('report-overlay').hidden=false;
+}
 function message(text,bad=false){$('message').textContent=text;$('message').className=bad?'error':'ok'}
 // This value belongs to the HTML/JS currently loaded in the browser, not the
 // footer's server-supplied version. Detect deployments while polling.
-const LOADED_UI_VERSION = '0.6.3';
+const LOADED_UI_VERSION = '0.6.4';
 const RELEASES_API = 'https://api.github.com/repos/FastHowTo/duplicate-file-monitor/releases/latest';
 function versionParts(value){
   const match=String(value||'').trim().match(/^v?(\d+)\.(\d+)\.(\d+)$/i);
@@ -235,8 +271,9 @@ function progressRender(s){lastStatus=s;const active=!!s.scanning,p=active?s.pro
   const stopping=active&&!!p?.stop_requested,cleaning=active&&p?.lifecycle==='cleaning',
         finalizing=active&&(p?.lifecycle==='finalizing'||p?.stage==='finalizing'||p?.stage==='complete'),
         preparing=active&&(p?.stage==='starting'||p?.stage==='preparing');
-  $('state').textContent=active?(finalizing?'Finalizing…':cleaning?'Cleaning up…':stopping?'Stopping scan…':preparing?'Preparing scan…':p?.paused?'Paused':'Running'):s.status==='success'?'Ready':s.status==='failed'?'Error':s.status==='cancelled'?'Stopped':'Ready';
-  $('state').className=active?'':s.status==='failed'?'status-bad':s.status==='success'?'status-good':'';
+  const wc=Number(s.warning_count||0);
+  $('state').textContent=active?(finalizing?'Finalizing…':cleaning?'Cleaning up…':stopping?'Stopping scan…':preparing?'Preparing scan…':p?.paused?'Paused':'Running'):reportStatus(s.status,wc);
+  $('state').className=active?'':s.status==='failed'||s.status==='interrupted'?'status-bad':s.status==='cancelled'?'status-cancelled':s.status==='success'?(wc?'status-warning':'status-good'):'';
   $('scan').disabled=active;$('scope-picker').style.pointerEvents=active?'none':'';
   $('scan-quick').disabled=active||!scanScopeReady(s);
   $('scan-quick').title=$('scan-quick').disabled?'Run a full scan first.':'Quick Scan: compare changes against a validated Full Scan baseline';
@@ -278,14 +315,14 @@ function progressRender(s){lastStatus=s;const active=!!s.scanning,p=active?s.pro
     else if(cleaning){$('stage-name').textContent='Cleaning up';detailsLines(['Finishing database cleanup…']);}
     else if(stopping){$('stage-name').textContent='Stopping scan';detailsLines(['Stop requested. Finishing active work…']);}
     else if(preparing){$('stage-name').textContent='Preparing scan';detailsLines([p?.preparing_step||'Preparing inventory…']);}
-    else if(p.stage==='enumerating'){$('stage-name').textContent='File Discovery';const line=document.createElement('span');line.textContent='Discovering files';const dots=document.createElement('span');dots.id='discovery-dots';dots.className='discovery-dots';dots.textContent='.'.repeat(discoveryDot);$('stage-details').replaceChildren(line,dots)}
+    else if(p.stage==='enumerating'){$('stage-name').textContent='File Discovery';const line=document.createElement('span');line.textContent='Discovering files · '+fmt(p.directories_visited||0)+' directories visited · '+(p.current_path||'');const dots=document.createElement('span');dots.id='discovery-dots';dots.className='discovery-dots';dots.textContent='.'.repeat(discoveryDot);$('stage-details').replaceChildren(line,dots)}
     else{const st=stageProgress(p);$('stage-name').textContent=st.name;meter.hidden=false;fill.style.width=Math.max(0,Math.min(100,st.pct)).toFixed(1)+'%';$('stage-pct').textContent=st.pct.toFixed(1)+'%';detailsLines(st.lines)}
-  }else if(s.status==='success'){$('stage-name').textContent='Finished';meter.hidden=false;fill.style.width='100%';$('stage-pct').textContent='100%';detailsLines(['Scan completed successfully'])}
+  }else if(s.status==='success'){$('stage-name').textContent=reportStatus(s.status,s.warning_count||0);meter.hidden=false;fill.style.width='100%';$('stage-pct').textContent='100%';detailsLines([s.warning_count?('Scan completed with '+s.warning_count+' recoverable warnings'):'Scan completed successfully'])}
   else if(s.status==='failed'||s.status==='cancelled'||s.status==='interrupted'){
-    const st=p?stageProgress(p):{pct:0,name:'File Discovery',lines:[]};const pct=st.pct==null?0:Math.max(0,Math.min(100,st.pct));$('stage-name').textContent='Finished';
+    const st=p?stageProgress(p):{pct:0,name:'File Discovery',lines:[]};const pct=st.pct==null?0:Math.max(0,Math.min(100,st.pct));$('stage-name').textContent=reportStatus(s.status,s.warning_count||0);
     const stageHasPercent=!!p&&['partial_hashing','full_hashing'].includes(p.stage);
     meter.hidden=!stageHasPercent;if(s.status==='failed')meter.classList.add('failed');fill.style.width=pct.toFixed(1)+'%';$('stage-pct').textContent=stageHasPercent?pct.toFixed(1)+'%':'';
-    const lines=s.status==='failed'?['ERROR',String(s.error||'Unknown scan error')]:s.status==='cancelled'?['Scan canceled',...st.lines]:['Scan interrupted. Previous published inventory retained.',...st.lines];
+    const lines=s.status==='failed'?['ERROR',String(s.error||'Unknown scan error')]:s.status==='cancelled'?['Scan cancelled',...st.lines]:['Scan interrupted. Previous published inventory retained.',...st.lines];
     detailsLines(lines,s.status==='failed');if(s.status==='failed'&&p?.stage==='full_hashing')detailsLines([...lines,...st.lines],true);
   }else{$('stage-name').textContent='No scans yet';detailsLines(['Start a scan to discover duplicate files.'])}
 }
@@ -592,7 +629,9 @@ async function refresh(){if(stateBusy)return;stateBusy=true;try{
   for(const item of h.slice(0,30)){
     const tr=document.createElement('tr'),isActive=s.scanning&&item.id===s.progress?.scan_id;
     cell(tr,date(item.started));cell(tr,((item.mode||'full')==='quick'?'Quick':'Full')+(item.scope&&item.scope.length===1?' · '+item.scope[0].split('/').pop():item.scope&&item.scope.length>1?' · '+item.scope.length+' volumes':''));
-    const st=cell(tr,isActive?'running':item.status);if(item.error&&!isActive)st.title=item.error;
+    const st=cell(tr,isActive?'Running':reportStatus(item.status,item.warning_count||0));
+    if(!isActive){st.style.color=reportColor(item.status,item.warning_count||0)}
+    if(item.error&&!isActive)st.title=item.error;
     // Historical records are immutable snapshots. Never substitute current totals.
     cell(tr,fmt(item.files),'num');cell(tr,fmt(item.duplicates),'num');cell(tr,bytes(item.wasted),'num');
     const t=cell(tr,item.started==null?'—':duration(Math.max(0,(isActive?Date.now()/1000:(item.ended??(item.status==='running'?Date.now()/1000:item.started)))-item.started)),'num');
@@ -605,9 +644,12 @@ async function refresh(){if(stateBusy)return;stateBusy=true;try{
       for(const vol of item.volumes){const line=document.createElement('div');line.className='tiny';
         line.textContent=`${vol.root.split('/').pop()||vol.root}: ${fmt(vol.file_count)} files · ${vol.duplicate_copies==null?'—':fmt(vol.duplicate_copies)} duplicates`;
         disclosure.append(line)}details.append(disclosure)}
+    if(!isActive&&item.has_report)details.append(makeReportLink(item.id));
     history.append(tr)
   }
   if(!h.length){const tr=document.createElement('tr');cell(tr,'No scans yet.');history.append(tr)}
+  $('current-report-link').replaceChildren();
+  if(!s.scanning&&s.id&&s.status!=='running')$('current-report-link').append(makeReportLink(s.id));
   const scanId=s.progress?.scan_id??s.id??null;
   if(directoryLoaded&&!s.scanning&&scanId!=null&&scanId!==lastDirectoryScanId){lastDirectoryScanId=scanId;loadSavedDirectoryMatches()}
   if(scanId!==loadedScanId&&s.scanning&&s.progress?.stage==='enumerating'){/* report still represents last published inventory */}
@@ -653,5 +695,5 @@ async function pollLiveProgress(){if(lastRunning){try{const s=await api('/api/pr
     }
   }}catch{}}
   setTimeout(pollLiveProgress,lastRunning?500:1500)}
-async function poll(){await refresh();setTimeout(poll,!backendReady?2000:lastRunning?5000:30000)}poll();pollLiveProgress();
+async function poll(){await refresh();setTimeout(poll,!backendReady?2000:lastRunning?5000:30000)}if(location.protocol==='http:'||location.protocol==='https:')loadAuth().catch(()=>location.replace('/login'));poll();pollLiveProgress();
 </script></body></html>
