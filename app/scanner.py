@@ -4,6 +4,8 @@ Source files are never modified. The completed inventory is kept separately from
 an in-progress scan; only a fully validated scan can replace it or accrue savings.
 """
 import hashlib
+import errno
+import fnmatch
 from collections import deque
 from queue import Queue, Empty
 import struct
@@ -69,6 +71,9 @@ CREATE INDEX IF NOT EXISTS work_partial_idx ON work_files(size,partial);
 CREATE INDEX IF NOT EXISTS work_samples_idx ON work_files(size,samples);
 -- Efficient live lookups for exact, fully fingerprinted duplicate copies.
 CREATE INDEX IF NOT EXISTS work_full_idx ON work_files(size,full) WHERE full IS NOT NULL;
+CREATE TABLE IF NOT EXISTS scan_reports(scan_id INTEGER PRIMARY KEY, report_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS scan_warnings(id INTEGER PRIMARY KEY,scan_id INTEGER NOT NULL,root TEXT NOT NULL,path TEXT NOT NULL,category TEXT NOT NULL,message TEXT NOT NULL,created REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS warning_scan_idx ON scan_warnings(scan_id);
 CREATE TABLE IF NOT EXISTS scan_progress(
   id INTEGER PRIMARY KEY CHECK(id=1), scan_id INTEGER, stage TEXT,
   file_count INTEGER DEFAULT 0, candidates INTEGER DEFAULT 0,
@@ -111,14 +116,14 @@ def _current_schema_readonly(db):
     try:
         required = {'files','scans','meta','volume_scans','excluded_roots',
                     'invalid_baselines','hash_cache','partial_cache',
-                    'work_files','scan_progress'}
+                    'work_files','scan_progress','scan_reports','scan_warnings'}
         present = {row[0] for row in c.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         if not required.issubset(present):
             return False
         scans = {row[1] for row in c.execute('PRAGMA table_info(scans)')}
         vols = {row[1] for row in c.execute('PRAGMA table_info(volume_scans)')}
-        if not {'mode','progress_json','changes_json'}.issubset(scans):
+        if not {'mode','progress_json','changes_json','warning_count'}.issubset(scans):
             return False
         if not {'modified','possible_moves','added','removed','duplicate_copies','wasted_bytes'}.issubset(vols):
             return False
@@ -147,6 +152,8 @@ def initialize_database(db):
             cols = {r[1] for r in c.execute('PRAGMA table_info(volume_scans)')}
             scan_cols = {r[1] for r in c.execute('PRAGMA table_info(scans)')}
             with c:
+                if 'warning_count' not in scan_cols:
+                    c.execute('ALTER TABLE scans ADD COLUMN warning_count INTEGER NOT NULL DEFAULT 0')
                 if 'mode' not in scan_cols:
                     c.execute("ALTER TABLE scans ADD COLUMN mode TEXT NOT NULL DEFAULT 'full'")
                 if 'progress_json' not in scan_cols:
@@ -358,6 +365,58 @@ def validate_cifs_mounts(roots):
             raise RuntimeError(f'Scan root is inaccessible: {root}: {exc}') from exc
 
 
+RECOVERABLE_ERRNOS = {errno.EACCES,errno.EPERM,errno.ENOENT,errno.ENOTDIR,errno.EISDIR}
+def _recoverable(exc):
+    if isinstance(exc,OSError):
+        return exc.errno in RECOVERABLE_ERRNOS
+    return isinstance(exc,RuntimeError) and str(exc).startswith(
+        ('File changed since enumeration:','File changed during hashing:','Unexpected EOF:'))
+
+def _ignored(path,root):
+    relative=os.path.relpath(path,root)
+    return any(fnmatch.fnmatch(os.path.basename(path),p.strip()) or fnmatch.fnmatch(relative,p.strip())
+               for p in os.getenv('SCAN_IGNORE','').split(':') if p.strip())
+
+def _preserve_existing(c,root,path,directory=False):
+    if directory:
+        prefix=path.rstrip('/')+'/'
+        c.execute("""INSERT OR IGNORE INTO work_files
+            (path,root,size,mtime_ns,dev,inode,partial,samples,full)
+            SELECT path,root,size,mtime_ns,dev,inode,partial,NULL,full
+            FROM files WHERE root=? AND (path=? OR substr(path,1,?)=?)""",
+            (root,path,len(prefix),prefix))
+    else:
+        c.execute("""INSERT OR REPLACE INTO work_files
+            (path,root,size,mtime_ns,dev,inode,partial,samples,full)
+            SELECT path,root,size,mtime_ns,dev,inode,partial,NULL,full
+            FROM files WHERE root=? AND path=?""",(root,path))
+
+def _save_warnings(c,scan_id,items,control):
+    if not items: return
+    with c:
+        c.executemany("""INSERT INTO scan_warnings(scan_id,root,path,category,message,created)
+            VALUES(?,?,?,?,?,?)""",[(scan_id,w['root'],w['path'],w['category'],
+            w['message'],w['created']) for w in items])
+    control.add_progress(warning_count=len(items))
+    for w in items:
+        print('SCAN WARNING: '+json.dumps(w,ensure_ascii=False),flush=True)
+
+def read_scan_report(c,scan_id):
+    record=c.execute('SELECT report_json FROM scan_reports WHERE scan_id=?',(scan_id,)).fetchone()
+    return json.loads(record['report_json']) if record else None
+
+def _previous_snapshot(c,root):
+    row=c.execute("""SELECT s.ended,v.file_count,v.duplicate_copies,v.wasted_bytes,r.report_json
+         FROM volume_scans v JOIN scans s ON s.id=v.scan_id
+         LEFT JOIN scan_reports r ON r.scan_id=s.id
+         WHERE v.root=? AND s.status='success' ORDER BY s.id DESC LIMIT 1""",(root,)).fetchone()
+    if not row: return None
+    result=dict(row)
+    data=json.loads(result.pop('report_json') or '{}')
+    result['total_size_bytes']=next((v.get('total_size_bytes')
+            for v in data.get('volumes',()) if v['root']==root),None)
+    return result
+
 class ScanCancelled(Exception):
     pass
 
@@ -403,6 +462,7 @@ class ScanControl:
             'io_files': 0, 'io_open_seconds': 0.0, 'io_seek_seconds': 0.0,
             'io_read_seconds': 0.0, 'io_hash_seconds': 0.0,
             'io_throttle_seconds': 0.0, 'io_stat_seconds': 0.0,
+            'warning_count': 0, 'directories_visited': 0, 'current_path': '',
         }
         self.set_bandwidth(bandwidth_mbps)
 
