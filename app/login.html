@@ -24,6 +24,12 @@ let setup=false;
 async function initialize(){
  try{
   const r=await fetch('/api/auth/status',{cache:'no-store'});
+  if(r.status===503){
+    el('subtitle').textContent='Starting Duplicate File Monitor…';
+    setTimeout(initialize,2000);
+    return;
+  }
+  if(!r.ok)throw Error('Authentication status unavailable');
   const s=await r.json();
   if(s.authenticated){location.replace('/');return}
   setup=!!s.setup_required;
