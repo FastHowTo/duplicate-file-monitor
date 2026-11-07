@@ -27,7 +27,7 @@ from schedule_engine import (get_schedules, save_schedules, update_run,
 from scanner import (ScanControl, archive_volume, connect, current_metrics,
                      effective_roots, read_meta, report, restore_volume, scan,
                      write_meta, initialize_database, FINGERPRINT_PROFILE,
-                     quick_baseline_available)
+                     quick_baseline_available, read_scan_report)
 
 DB = os.getenv('DB_PATH', '/data/inventory.sqlite3')
 ROOTS = [r for r in os.getenv('SCAN_ROOTS', '/scan').split(':') if r]
@@ -404,6 +404,9 @@ class Handler(BaseHTTPRequestHandler):
                               'error': startup_error, 'version': VERSION})
                 return
             if path == '/api/auth/status':
+                if not startup_ready.is_set():
+                    self.respond({'authenticated':False,'setup_required':False,'setup_configured':False,'starting':True},503)
+                    return
                 session = self.session() if auth.has_admin(DB) else None
                 self.respond({'authenticated':bool(session),
                               'setup_required':not auth.has_admin(DB),
@@ -435,6 +438,20 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/favicon.ico':
                 self.send_response(204)
                 self.end_headers()
+            elif path.startswith('/api/reports/'):
+                try:
+                    scan_id=int(path.rsplit('/',1)[1])
+                except ValueError:
+                    raise ValueError('Invalid scan ID')
+                c=connect(DB,readonly=True)
+                try:
+                    data=read_scan_report(c,scan_id)
+                finally:
+                    c.close()
+                if data is None:
+                    self.respond({'error':'Report unavailable for this scan (legacy history may predate reporting)'},404)
+                else:
+                    self.respond(data)
             elif path == '/api/monitoring':
                 self.respond(monitoring())
             elif path == '/api/mqtt-settings':
@@ -792,6 +809,9 @@ def bootstrap_database():
 
 if __name__ == '__main__':
     os.makedirs(os.path.dirname(DB), exist_ok=True)
+    for obsolete in ('SCAN_INTERVAL_SECONDS','SCAN_ON_START'):
+        if obsolete in os.environ:
+            print('WARNING: '+obsolete+' is ignored; configure scan schedules in the dashboard',flush=True)
     sqlite_tmp = os.path.join(os.path.dirname(DB), '.sqlite-tmp')
     os.makedirs(sqlite_tmp, mode=0o700, exist_ok=True)
     if not os.access(sqlite_tmp, os.W_OK):
