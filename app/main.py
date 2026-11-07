@@ -553,7 +553,13 @@ class Handler(BaseHTTPRequestHandler):
                                 'SELECT scan_id,root,file_count,duplicate_copies,wasted_bytes '
                                 'FROM volume_scans WHERE scan_id IN ('+placeholders+')', ids):
                             members.setdefault(member['scan_id'], []).append(dict(member))
+                    report_ids=set()
+                    if ids:
+                        for record in c.execute(
+                            'SELECT scan_id FROM scan_reports WHERE scan_id IN ('+placeholders+')',ids):
+                            report_ids.add(record['scan_id'])
                     for row in rows:
+                        row['has_report']=row['id'] in report_ids
                         row['volumes'] = members.get(row['id'], [])
                         try:
                             raw=json.loads(row.get('progress_json') or '{}')
