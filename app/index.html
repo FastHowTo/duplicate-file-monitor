@@ -201,7 +201,7 @@ async function openReport(scanId){
 function message(text,bad=false){$('message').textContent=text;$('message').className=bad?'error':'ok'}
 // This value belongs to the HTML/JS currently loaded in the browser, not the
 // footer's server-supplied version. Detect deployments while polling.
-const LOADED_UI_VERSION = '0.6.3';
+const LOADED_UI_VERSION = '0.6.4';
 const RELEASES_API = 'https://api.github.com/repos/FastHowTo/duplicate-file-monitor/releases/latest';
 function versionParts(value){
   const match=String(value||'').trim().match(/^v?(\d+)\.(\d+)\.(\d+)$/i);
@@ -644,7 +644,7 @@ async function refresh(){if(stateBusy)return;stateBusy=true;try{
       for(const vol of item.volumes){const line=document.createElement('div');line.className='tiny';
         line.textContent=`${vol.root.split('/').pop()||vol.root}: ${fmt(vol.file_count)} files · ${vol.duplicate_copies==null?'—':fmt(vol.duplicate_copies)} duplicates`;
         disclosure.append(line)}details.append(disclosure)}
-    if(!isActive&&item.status!=='running')details.append(makeReportLink(item.id));
+    if(!isActive&&item.has_report)details.append(makeReportLink(item.id));
     history.append(tr)
   }
   if(!h.length){const tr=document.createElement('tr');cell(tr,'No scans yet.');history.append(tr)}
@@ -695,5 +695,5 @@ async function pollLiveProgress(){if(lastRunning){try{const s=await api('/api/pr
     }
   }}catch{}}
   setTimeout(pollLiveProgress,lastRunning?500:1500)}
-async function poll(){await refresh();setTimeout(poll,!backendReady?2000:lastRunning?5000:30000)}loadAuth().catch(()=>location.replace('/login'));poll();pollLiveProgress();
+async function poll(){await refresh();setTimeout(poll,!backendReady?2000:lastRunning?5000:30000)}if(location.protocol==='http:'||location.protocol==='https:')loadAuth().catch(()=>location.replace('/login'));poll();pollLiveProgress();
 </script></body></html>
