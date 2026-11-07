@@ -82,6 +82,41 @@ def wait_scan(base, n=1):
     raise AssertionError('Scan not done in 7.5 sec')
 
 
+def test_authentication_and_csrf_block_unauthorized_api(running):
+    base,roots,db=running
+    def raw(path, method='GET', data=None, headers=None):
+        req=urllib.request.Request(base+path,method=method,
+            data=json.dumps(data or {}).encode() if method=='POST' else None,
+            headers=headers or {})
+        try:
+            with urllib.request.urlopen(req,timeout=5) as response:
+                return response.status,dict(response.headers)
+        except urllib.error.HTTPError as exc:
+            return exc.code,dict(exc.headers)
+    assert raw('/api/status')[0]==401
+    assert raw('/api/volumes')[0]==401
+    assert raw('/api/history')[0]==401
+    assert raw('/metrics')[0]==401
+    assert raw('/api/scan',method='POST',headers={'Content-Type':'application/json'})[0]==401
+    assert request(base,'/api/status')[0]==200
+    cookie,csrf=AUTH[base]
+    assert raw('/api/settings',method='POST',headers={
+        'Cookie':cookie,'Content-Type':'application/json'})[0]==403
+    assert raw('/api/settings',method='POST',headers={
+        'Cookie':cookie,'Content-Type':'text/plain','X-DFM-CSRF':csrf})[0]==415
+    assert raw('/api/settings',method='POST',headers={
+        'Cookie':cookie,'Content-Type':'application/json',
+        'X-DFM-CSRF':csrf,'Origin':'https://evil.example'})[0]==403
+    assert request(base,'/api/settings')[0]==200
+    assert raw('/metrics',headers={'Authorization':'Bearer '+METRICS_TOKEN})[0]==200
+    assert raw('/metrics',headers={'Authorization':'Bearer incorrect'})[0]==401
+    # Every new scan produced on the current version has an immutable report.
+    c=request(base,'/api/history')[1][0]
+    assert c['has_report']
+    report=request(base,'/api/reports/'+str(c['id']))[1]
+    assert report['scan_id']==c['id']
+    assert report['totals']['file_count']==9
+
 def test_http_startup_readonly_status_and_schedules(running):
     base,roots,db=running
     assert request(base,'/api/startup')[1]['version']=='0.6.4'
