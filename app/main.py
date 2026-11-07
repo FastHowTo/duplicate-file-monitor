@@ -403,6 +403,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond({'ready': startup_ready.is_set(), 'phase': startup_phase,
                               'error': startup_error, 'version': VERSION})
                 return
+            if path in ('/','/index.html','/login') and not startup_ready.is_set():
+                self.render_html(LOGIN)
+                return
             if path == '/api/auth/status':
                 if not startup_ready.is_set():
                     self.respond({'authenticated':False,'setup_required':False,'setup_configured':False,'starting':True},503)
