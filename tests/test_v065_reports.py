@@ -109,7 +109,12 @@ def test_legacy_report_is_created_only_once_with_unknowns(tmp_path):
     assert scanner.reconstruct_legacy_scan_report(db, 999) is None
 
 
-def test_browser_status_styles_and_history_links():
+def test_browser_status_styles_and_history_links(tmp_path, monkeypatch):
+    # Other HTTP tests import main.py, which sets a container-only TMPDIR.
+    # Playwright must use an actual runner-local writable temp directory.
+    import tempfile
+    monkeypatch.setenv('TMPDIR', str(tmp_path))
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path))
     pytest.importorskip('playwright.sync_api')
     from playwright.sync_api import sync_playwright
     html = (Path(__file__).resolve().parents[1] / 'app/index.html').read_text()
