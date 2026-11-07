@@ -1,8 +1,12 @@
-"""Duplicate File Monitor HTTP UI and API (LAN-only unless secured externally)."""
+"""Duplicate File Monitor authenticated HTTP UI and API."""
 import json
 import datetime
-import sqlite3
 import os
+# SQLite initializes its scratch path at import time; set it beforehand.
+_sqlite_dir = os.path.join(os.path.dirname(os.getenv('DB_PATH', '/data/inventory.sqlite3')), '.sqlite-tmp')
+os.environ.setdefault('SQLITE_TMPDIR', _sqlite_dir)
+os.environ.setdefault('TMPDIR', _sqlite_dir)
+import sqlite3
 import shutil
 import threading
 import traceback
@@ -11,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+import auth
 from version import VERSION
 from directory_matches import duplicate_directories
 from directory_report_cache import get_directory_report, refresh_directory_report
@@ -35,6 +40,7 @@ startup_ready = threading.Event()
 startup_phase = 'Preparing database'
 startup_error = None
 UI = Path(__file__).with_name('index.html')
+LOGIN = Path(__file__).with_name('login.html')
 _volume_stats_cache = {'key':None,'metrics':{}}
 
 
@@ -329,13 +335,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         super().log_message(fmt, *args)
 
-    def respond(self, data, code=200):
+    def respond(self, data, code=200, extra_headers=None):
         body = json.dumps(data).encode('utf-8')
         self.send_response(code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Content-Length', str(len(body)))
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -347,6 +355,40 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(data, dict):
             raise ValueError('Expected JSON object')
         return data
+
+    def render_html(self, path):
+        body = path.read_bytes()
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
+        self.send_header('Content-Security-Policy', "frame-ancestors 'none'")
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def session(self):
+        return auth.get_session(DB, self.headers.get('Cookie', ''))
+
+    def check_origin(self):
+        if self.headers.get('Sec-Fetch-Site','').lower() == 'cross-site':
+            self.respond({'error':'Cross-origin request denied'},403)
+            return False
+        origin = self.headers.get('Origin')
+        if origin:
+            from urllib.parse import urlsplit
+            parsed = urlsplit(origin)
+            # Host must reflect the publicly requested host, including the
+            # port. Reject malformed and cross-origin requests.
+            if parsed.scheme not in ('http','https') or parsed.netloc.lower() != self.headers.get('Host','').lower() or parsed.username is not None:
+                self.respond({'error':'Cross-origin request denied'},403)
+                return False
+        return True
+
+    def csrf_valid(self, session):
+        return bool(session and self.headers.get('X-DFM-CSRF','') and
+                    __import__('hmac').compare_digest(self.headers.get('X-DFM-CSRF',''),session['csrf']))
 
     def do_GET(self):
         parsed = urlsplit(self.path)
@@ -361,19 +403,38 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond({'ready': startup_ready.is_set(), 'phase': startup_phase,
                               'error': startup_error, 'version': VERSION})
                 return
+            if path == '/api/auth/status':
+                session = self.session() if auth.has_admin(DB) else None
+                self.respond({'authenticated':bool(session),
+                              'setup_required':not auth.has_admin(DB),
+                              'setup_configured':len(os.getenv('DFM_SETUP_TOKEN',''))>=24,
+                              'username':session['username'] if session else None,
+                              'csrf':session['csrf'] if session else None})
+                return
             if path not in ('/', '/index.html') and not startup_ready.is_set():
                 self.respond({'error': ('Database startup failed: '+startup_error) if startup_error else ('Database initialization: ' + startup_phase),
                               'phase': startup_phase, 'version': VERSION}, 503)
                 return
+            session = self.session()
+            if path == '/metrics':
+                if not (session or auth.metrics_authorized(self.headers.get('Authorization',''))):
+                    self.respond({'error':'Authentication required'},401)
+                    return
+            elif not session:
+                if path in ('/','/index.html','/login'):
+                    self.render_html(LOGIN)
+                    return
+                self.respond({'error':'Authentication required'},401)
+                return
             if path in ('/', '/index.html'):
-                body = UI.read_bytes()
-                self.send_response(200)
-                self.send_header('Content-Type', 'text/html; charset=utf-8')
-                self.send_header('Cache-Control', 'no-store')
-                self.send_header('X-Content-Type-Options', 'nosniff')
-                self.send_header('Content-Length', str(len(body)))
+                self.render_html(UI)
+            elif path == '/login':
+                self.render_html(LOGIN)
+            elif path == '/api/auth/session':
+                self.respond({'username':session['username'],'csrf':session['csrf']})
+            elif path == '/favicon.ico':
+                self.send_response(204)
                 self.end_headers()
-                self.wfile.write(body)
             elif path == '/api/monitoring':
                 self.respond(monitoring())
             elif path == '/api/mqtt-settings':
@@ -507,6 +568,49 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         path = parsed.path
         try:
+            if not self.check_origin():
+                return
+            ctype = self.headers.get('Content-Type','').split(';',1)[0].strip().lower()
+            if ctype != 'application/json':
+                self.respond({'error':'Content-Type must be application/json'},415)
+                return
+            if path == '/api/auth/setup':
+                if not startup_ready.is_set():
+                    self.respond({'error':'Database not ready'},503)
+                    return
+                data = self.body_json()
+                # The random setup token is a one-time secret, not a default credential.
+                auth.setup(DB, data.get('setup_token'), data.get('username'), data.get('password'))
+                token, csrf = auth.create_session(DB,data['username'])
+                self.respond({'ok':True,'csrf':csrf},200,
+                             {'Set-Cookie':auth.cookie_header(token)})
+                return
+            if path == '/api/auth/login':
+                if not startup_ready.is_set():
+                    self.respond({'error':'Database not ready'},503)
+                    return
+                data = self.body_json()
+                token, csrf = auth.login(DB,data.get('username'),data.get('password'),self.client_address[0])
+                self.respond({'ok':True,'csrf':csrf},200,
+                             {'Set-Cookie':auth.cookie_header(token)})
+                return
+            session = self.session()
+            if not session:
+                self.respond({'error':'Authentication required'},401)
+                return
+            if not self.csrf_valid(session):
+                self.respond({'error':'Invalid CSRF token'},403)
+                return
+            if path == '/api/auth/logout':
+                auth.revoke(DB,self.headers.get('Cookie',''))
+                self.respond({'ok':True},200,{'Set-Cookie':auth.clear_cookie_header()})
+                return
+            if path == '/api/auth/change':
+                data = self.body_json()
+                auth.change_credentials(DB,session['username'],
+                    data.get('current_password'),data.get('username'),data.get('password'))
+                self.respond({'ok':True},200,{'Set-Cookie':auth.clear_cookie_header()})
+                return
             if not startup_ready.is_set():
                 self.respond({'error': ('Database startup failed: '+startup_error) if startup_error else ('Database initialization: ' + startup_phase)}, 503)
                 return
@@ -642,7 +746,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond({'ok':True,'schedules':saved})
                 return
             self.send_error(404)
-        except (ValueError,KeyError,TypeError) as exc:
+        except (ValueError,KeyError,TypeError,auth.AuthError) as exc:
             self.respond({'error':str(exc)}, 400)
         except Exception as exc:
             print('API error:', repr(exc), flush=True)
@@ -663,6 +767,7 @@ def bootstrap_database():
         print('Database startup: ' + startup_phase, flush=True)
         begin = time.monotonic()
         initialize_database(DB)
+        auth.initialize(DB)
         startup_phase = 'Checking existing scan history (read-only)'
         c = connect(DB, readonly=True)
         try:
@@ -691,8 +796,7 @@ if __name__ == '__main__':
     os.makedirs(sqlite_tmp, mode=0o700, exist_ok=True)
     if not os.access(sqlite_tmp, os.W_OK):
         raise RuntimeError('SQLite temporary directory is not writable: ' + sqlite_tmp)
-    os.environ['SQLITE_TMPDIR'] = sqlite_tmp
-    os.environ['TMPDIR'] = sqlite_tmp
+    # These variables were configured before sqlite3 was imported.
     print('SQLite scratch directory: ' + sqlite_tmp, flush=True)
     # HTTP must be ready BEFORE expensive recovery, checkpoints, or migrations.
     httpd = ThreadingHTTPServer(('0.0.0.0', int(os.getenv('HTTP_PORT','8080'))), Handler)
