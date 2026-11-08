@@ -733,7 +733,7 @@ let renderedProgress=null,lastStatus=null;
 let settingsFeedbackTimer=null;let liveHistoryDuration=null,liveHistoryStart=null;
 function updateElapsed(){if(currentStart!=null){const elapsed=duration(Math.max(0,(currentCutoff??Date.now()/1000)-currentStart));$('scan-time').textContent='Elapsed: '+elapsed;if(liveHistoryDuration)liveHistoryDuration.textContent=elapsed}}
 setInterval(updateElapsed,1000);
-setInterval(()=>{const dots=$('discovery-dots');if(currentStage==='enumerating'&&dots){dots.textContent='.'.repeat(discoveryDot);discoveryDot=(discoveryDot+1)%4}},500);
+setInterval(()=>{const dots=$('discovery-dots');if(currentStage==='enumerating'&&dots){discoveryDot=(discoveryDot+1)%3;dots.textContent='.'.repeat(1+discoveryDot)}},500);
 function discoveredForSnapshot(p){
   // Only the scan-wide counter is authoritative during enumeration.
   // Per-volume counters can be asynchronously sampled at different times;
@@ -752,6 +752,17 @@ function stageProgress(p){const isFast=p.stage==='partial_hashing';const isFull=
 }
 function compareBytes(done,total){const units=['B','KiB','MiB','GiB','TiB','PiB'];let magnitude=0,x=total;while(x>=1024&&magnitude<units.length-1){x/=1024;magnitude++}const index=Math.max(0,magnitude-1),divisor=1024**index;const render=n=>(n/divisor).toLocaleString(undefined,{minimumFractionDigits:index?1:0,maximumFractionDigits:index?1:0});return `Bytes compared: ${render(done)} ${units[index]} of ${render(total)} ${units[index]}`}
 function detailsLines(lines,isError=false){const target=$('stage-details');target.replaceChildren();for(const line of lines){const div=document.createElement('div');div.textContent=line;if(isError)div.className='error';target.append(div)}}
+function showDiscoveryActivity(){
+  const container=$('stage-details');
+  if($('discovery-dots'))return; // Preserve the animated span across status refreshes.
+  const line=document.createElement('div');
+  line.append('Discovering files');
+  const dots=document.createElement('span');
+  dots.id='discovery-dots';dots.className='discovery-dots';
+  dots.setAttribute('aria-hidden','true');
+  dots.textContent='.'.repeat(1+discoveryDot);
+  line.append(dots);container.replaceChildren(line);
+}
 function finalizingLines(p){return [p.finalizing_step||'Finishing scan and saving database…',...(p.can_stop===false?[p.stop_disabled_reason||'Stop is unavailable during finalization.']:[])]}
 function progressRender(s){lastStatus=s;const active=!!s.scanning,p=active?s.progress:s.last_scan_progress;renderedProgress=p;currentStage=active&&p?.stage==='enumerating'&&!p?.stop_requested&&p?.lifecycle!=='cleaning'?'enumerating':null;
   const stopping=active&&!!p?.stop_requested,cleaning=active&&p?.lifecycle==='cleaning',
@@ -803,7 +814,7 @@ function progressRender(s){lastStatus=s;const active=!!s.scanning,p=active?s.pro
     else if(cleaning){$('stage-name').textContent='Cleaning up';detailsLines(['Finishing database cleanup…']);}
     else if(stopping){$('stage-name').textContent='Stopping scan';detailsLines(['Stop requested. Finishing active work…']);}
     else if(preparing){$('stage-name').textContent='Preparing scan';detailsLines([p?.preparing_step||'Preparing inventory…']);}
-    else if(p.stage==='enumerating'){$('stage-name').textContent='File Discovery';detailsLines(['Discovering files…'])}
+    else if(p.stage==='enumerating'){$('stage-name').textContent='File Discovery';showDiscoveryActivity()}
     else{const st=stageProgress(p);$('stage-name').textContent=st.name;meter.hidden=st.pct==null;if(st.pct!=null){fill.style.width=Math.max(0,Math.min(100,st.pct)).toFixed(1)+'%';$('stage-pct').textContent=st.pct.toFixed(1)+'%'}detailsLines(st.lines)}
   }else if(s.status==='success'){$('stage-name').textContent=reportStatus(s.status,s.warning_count||0);stageName.classList.add(s.warning_count?'stage-warning':'stage-complete');meter.classList.add(s.warning_count?'warning':'complete');meter.hidden=false;fill.style.width='100%';$('stage-pct').textContent='100%';detailsLines([s.warning_count?('Scan completed with '+s.warning_count+' recoverable warnings'):'Scan completed successfully'])}
   else if(s.status==='failed'||s.status==='cancelled'||s.status==='interrupted'){
