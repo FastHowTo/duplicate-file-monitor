@@ -94,9 +94,12 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 .page-info{font-size:.85rem;color:#a6b7ce}.settings-notice{font-size:.82rem;color:#a6b7ce;margin:10px 0}.settings-feedback{min-height:1.25rem;font-size:.86rem;margin-top:5px}
 @media(max-width:1200px) and (min-width:851px){.metric-grid.global-summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:850px){.metric-grid.global-summary-grid,.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:580px){.metric-grid.global-summary-grid{grid-template-columns:1fr}header{padding:16px}main{padding:14px}.panel{padding:14px}.metric-grid{grid-template-columns:1fr}.stat-value{font-size:1.8rem}th,td{padding:8px 5px}.page-controls{justify-content:center}}
-#directory-matches-panel th[data-dir-sort]{cursor:pointer;user-select:none;white-space:nowrap}
-#directory-matches-panel th[data-dir-sort]:hover,#directory-matches-panel th[data-dir-sort]:focus{color:#fff;outline-offset:-2px}
-#directory-matches-panel th .sort-arrow{display:inline-block;min-width:1em;text-align:center}
+#directory-matches-panel th[data-dir-sort],#duplicate-files-panel th[data-file-sort]{cursor:pointer;user-select:none;white-space:nowrap}
+#directory-matches-panel th[data-dir-sort]:hover,#directory-matches-panel th[data-dir-sort]:focus,#duplicate-files-panel th[data-file-sort]:hover,#duplicate-files-panel th[data-file-sort]:focus{color:#fff;outline-offset:-2px}
+#directory-matches-panel th .sort-arrow,#duplicate-files-panel th .sort-arrow{display:inline-block;min-width:1em;text-align:center}
+.duplicate-search{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;min-width:0;max-width:100%}
+.duplicate-search #filter{flex:1 1 300px;min-width:0;width:min(430px,65vw)}
+.duplicate-search #search{flex:0 0 auto;white-space:nowrap}
 .report-collapse{margin:0}
 .report-collapse>summary{display:flex;align-items:center;flex-wrap:wrap;column-gap:14px;row-gap:5px;list-style:none;cursor:pointer;color:#e8f0fb;min-height:30px}
 .report-collapse>summary::-webkit-details-marker{display:none}
@@ -141,11 +144,9 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 <section class="panel" id="volume-summary-panel"><h2>Per-volume inventory</h2><p class="muted tiny">Current published inventory and last successful scan, not historical totals.</p><div class="scroll"><table><thead><tr><th>Volume</th><th class="num">Files</th><th class="num">Duplicates</th><th class="num">Wasted</th><th>Last scan</th></tr></thead><tbody id="volume-summary"></tbody></table></div></section>
 <section class="panel" id="duplicate-files-panel"><details class="report-collapse" id="duplicate-files-collapse">
 <summary><h2 class="report-title">Duplicate files</h2><span class="report-updated" id="duplicate-files-updated">Last updated —</span><span class="report-caret" aria-hidden="true">⌃</span></summary>
-<div class="report-content"><div class="sectiontop"><span class="muted tiny">Confirmed duplicate files · all volumes</span><div class="actions"><input type="search" id="filter" placeholder="Search filenames or full paths"><button class="secondary" id="search">Search</button></div></div>
-<div class="actions"><label for="sort">Sort by</label><select id="sort"><option value="wasted">Wasted space</option><option value="size">File size</option><option value="copies">Copy count</option><option value="filename">Filename</option></select>
-<select id="order" aria-label="Sort direction"><option value="desc">Descending</option><option value="asc">Ascending</option></select></div>
+<div class="report-content"><div class="sectiontop"><span class="muted tiny">Confirmed duplicate files · all volumes</span><div class="duplicate-search"><input type="search" id="filter" placeholder="Search filenames or full paths"><button class="secondary" id="search">Search</button></div></div>
 <div id="results-count" class="page-info" style="margin-top:12px"></div>
-<div class="scroll"><table><thead><tr><th>Matching copies and full paths</th><th class="num">Copies</th><th class="num">Wasted</th></tr></thead><tbody id="duplicates"><tr><td colspan="3">No duplicates confirmed yet.</td></tr></tbody></table></div>
+<div class="scroll"><table><thead><tr><th data-file-sort="filename" tabindex="0" role="button">Filename and matching paths <span class="sort-arrow"></span></th><th class="num" data-file-sort="size" tabindex="0" role="button">File size <span class="sort-arrow"></span></th><th class="num" data-file-sort="copies" tabindex="0" role="button">Copies <span class="sort-arrow"></span></th><th class="num" data-file-sort="wasted" tabindex="0" role="button">Wasted space <span class="sort-arrow"></span></th></tr></thead><tbody id="duplicates"><tr><td colspan="4">No duplicates confirmed yet.</td></tr></tbody></table></div>
 <div class="report-pager">
 <div class="pager-nav" role="group" aria-label="Duplicate files pages"><button class="secondary pager-btn" id="files-first" aria-label="First page">&lt;&lt;</button><button class="secondary pager-btn" id="files-prev" aria-label="Previous page">&lt;</button><select id="files-page-select" aria-label="Duplicate files page"><option value="1">1</option></select><button class="secondary pager-btn" id="files-next" aria-label="Next page">&gt;</button><button class="secondary pager-btn" id="files-last" aria-label="Last page">&gt;&gt;</button></div>
 <label class="pager-size" for="files-page-size">Records per page <select id="files-page-size"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
@@ -322,16 +323,20 @@ async function openReport(scanId,trigger=null){
 function message(text,bad=false){$('message').textContent=text;$('message').className=bad?'error':'ok'}
 // This value belongs to the HTML/JS currently loaded in the browser, not the
 // footer's server-supplied version. Detect deployments while polling.
-const LOADED_UI_VERSION = '0.6.8';
+const LOADED_UI_VERSION = '__DFM_UI_VERSION__';
 const RELEASES_API = 'https://api.github.com/repos/FastHowTo/duplicate-file-monitor/releases/latest';
 function versionParts(value){
-  const match=String(value||'').trim().match(/^v?(\d+)\.(\d+)\.(\d+)$/i);
-  return match?match.slice(1).map(Number):null;
+  const match=String(value||'').trim().match(/^v?(\d+(?:\.\d+){2,})$/i);
+  return match?match[1].split('.').map(Number):null;
 }
 function isNewerRelease(latest,installed){
   const a=versionParts(latest),b=versionParts(installed);
   if(!a||!b)return false;
-  for(let i=0;i<3;i++){if(a[i]>b[i])return true;if(a[i]<b[i])return false}
+  for(let i=0;i<Math.max(a.length,b.length);i++){
+    const left=a[i]??0,right=b[i]??0;
+    if(left>right)return true;
+    if(left<right)return false;
+  }
   return false;
 }
 async function checkLatestRelease(){
@@ -364,6 +369,13 @@ function reloadOnDeployment(serverVersion){
 let backendReady=false;
 let lastRunning=false,stateBusy=false,settingsLoaded=false,currentStart=null,currentCutoff=null,currentStage=null,discoveryDot=0;
 let lastDupeRefresh=0,dupeLoading=false,loadedSource=null,loadedScanId=null,openGroups=new Set(),currentPage=1,totalPages=1,totalGroups=0,dupeQuery='';
+let fileSortKey='wasted',fileSortOrder='desc';
+try{
+  const previous=JSON.parse(localStorage.getItem('dfm-file-sort')||'null');
+  if(previous&&['wasted','size','copies','filename'].includes(previous.key)&&['asc','desc'].includes(previous.order)){
+    fileSortKey=previous.key;fileSortOrder=previous.order;
+  }
+}catch{}
 let renderedProgress=null,lastStatus=null;
 let settingsFeedbackTimer=null;let liveHistoryDuration=null,liveHistoryStart=null;
 function updateElapsed(){if(currentStart!=null){const elapsed=duration(Math.max(0,(currentCutoff??Date.now()/1000)-currentStart));$('scan-time').textContent='Elapsed: '+elapsed;if(liveHistoryDuration)liveHistoryDuration.textContent=elapsed}}
@@ -451,11 +463,11 @@ function progressRender(s){lastStatus=s;const active=!!s.scanning,p=active?s.pro
 }
 function groupKey(d){return `${d.size_bytes}:${d.sha256}`}
 function renderPaths(ul,paths){const signature=JSON.stringify(paths);if(ul.dataset.signature===signature)return;ul.dataset.signature=signature;ul.replaceChildren();for(const path of paths){const li=document.createElement('li');li.className='path';li.textContent=path;ul.append(li)}}
-function makeGroupRow(d){const tr=document.createElement('tr');tr.dataset.key=groupKey(d);const td=document.createElement('td');const title=document.createElement('div');title.className='duplicate-name';const details=document.createElement('details');details.addEventListener('toggle',()=>{if(details.open)openGroups.add(tr.dataset.key);else openGroups.delete(tr.dataset.key)});const summary=document.createElement('summary'),paths=document.createElement('ul');details.append(summary,paths);td.append(title,details);tr.append(td);const copies=cell(tr,'','num'),wasted=cell(tr,'','num');tr._parts={title,details,summary,paths,copies,wasted};return tr}
-function updateGroupRow(tr,d){const signature=JSON.stringify([d.representative_filename,d.size_bytes,d.copies,d.wasted_bytes,d.paths]);if(tr.dataset.signature===signature)return;tr.dataset.signature=signature;const x=tr._parts;const name=d.representative_filename||String(d.paths[0]||'').split('/').pop();x.title.textContent=`${name} — ${bytes(d.size_bytes)} per file`;x.summary.textContent=`Show ${fmt(d.paths.length)} full paths`;x.copies.textContent=fmt(d.copies);x.wasted.textContent=bytes(d.wasted_bytes);renderPaths(x.paths,d.paths);x.details.open=openGroups.has(tr.dataset.key)}
+function makeGroupRow(d){const tr=document.createElement('tr');tr.dataset.key=groupKey(d);const td=document.createElement('td');const title=document.createElement('div');title.className='duplicate-name';const details=document.createElement('details');details.addEventListener('toggle',()=>{if(details.open)openGroups.add(tr.dataset.key);else openGroups.delete(tr.dataset.key)});const summary=document.createElement('summary'),paths=document.createElement('ul');details.append(summary,paths);td.append(title,details);tr.append(td);const size=cell(tr,'','num'),copies=cell(tr,'','num'),wasted=cell(tr,'','num');tr._parts={title,details,summary,paths,size,copies,wasted};return tr}
+function updateGroupRow(tr,d){const signature=JSON.stringify([d.representative_filename,d.size_bytes,d.copies,d.wasted_bytes,d.paths]);if(tr.dataset.signature===signature)return;tr.dataset.signature=signature;const x=tr._parts;const name=d.representative_filename||String(d.paths[0]||'').split('/').pop();x.title.textContent=name;x.summary.textContent=`Show ${fmt(d.paths.length)} full paths`;x.size.textContent=bytes(d.size_bytes);x.copies.textContent=fmt(d.copies);x.wasted.textContent=bytes(d.wasted_bytes);renderPaths(x.paths,d.paths);x.details.open=openGroups.has(tr.dataset.key)}
 function applyRows(items){const body=$('duplicates'),prior=new Map([...body.querySelectorAll('tr[data-key]')].map(tr=>[tr.dataset.key,tr]));
   const anchor=[...prior.values()].find(tr=>{const r=tr.getBoundingClientRect();return r.bottom>0&&r.top<window.innerHeight});const anchorTop=anchor?.getBoundingClientRect().top;
-  if(!items.length){for(const tr of prior.values())tr.remove();let empty=body.querySelector('tr:not([data-key])');if(!empty){empty=document.createElement('tr');cell(empty,'No matching confirmed duplicate groups.');body.append(empty)}return}
+  if(!items.length){for(const tr of prior.values())tr.remove();let empty=body.querySelector('tr:not([data-key])');if(!empty){empty=document.createElement('tr');const td=cell(empty,'No matching confirmed duplicate groups.');td.colSpan=4;body.append(empty)}return}
   for(const placeholder of [...body.querySelectorAll('tr:not([data-key])')])placeholder.remove();
   let at=body.firstChild;const desired=new Set();for(const d of items){const key=groupKey(d);desired.add(key);let tr=prior.get(key);if(!tr)tr=makeGroupRow(d);updateGroupRow(tr,d);if(tr!==at)body.insertBefore(tr,at);at=tr.nextSibling}
   for(const [key,tr] of prior){if(!desired.has(key))tr.remove()}
@@ -602,7 +614,7 @@ async function loadDuplicates(){
   dupeLoading=true;
   try{
     const limit=Number($('files-page-size').value),offset=(currentPage-1)*limit;
-    const qs=new URLSearchParams({search:dupeQuery,limit:String(limit),offset:String(offset),sort:$('sort').value,order:$('order').value});
+    const qs=new URLSearchParams({search:dupeQuery,limit:String(limit),offset:String(offset),sort:fileSortKey,order:fileSortOrder});
     const data=await api('/api/duplicates?'+qs);
     totalPages=Math.max(1,data.total_pages);totalGroups=data.total_groups;
     if(currentPage>totalPages){currentPage=totalPages;dupeLoading=false;return loadDuplicates()}
@@ -618,8 +630,27 @@ function goFilePage(n){if(!Number.isInteger(n)||n<1||n>totalPages)return;current
 function searchChanged(){dupeQuery=$('filter').value.trim();currentPage=1;loadDuplicates()}
 $('search').onclick=searchChanged;
 $('filter').onkeydown=e=>{if(e.key==='Enter')searchChanged()};
-$('sort').onchange=()=>{currentPage=1;loadDuplicates()};
-$('order').onchange=()=>{currentPage=1;loadDuplicates()};
+function renderFileSortHeaders(){
+  for(const th of document.querySelectorAll('#duplicate-files-panel th[data-file-sort]')){
+    const active=th.dataset.fileSort===fileSortKey;
+    th.querySelector('.sort-arrow').textContent=active?(fileSortOrder==='desc'?'▼':'▲'):'';
+    th.setAttribute('aria-sort',active?(fileSortOrder==='desc'?'descending':'ascending'):'none');
+  }
+}
+for(const th of document.querySelectorAll('#duplicate-files-panel th[data-file-sort]')){
+  const sort=()=>{
+    const key=th.dataset.fileSort;
+    if(fileSortKey===key)fileSortOrder=fileSortOrder==='desc'?'asc':'desc';
+    else{fileSortKey=key;fileSortOrder='desc'}
+    try{localStorage.setItem('dfm-file-sort',JSON.stringify({key:fileSortKey,order:fileSortOrder}))}catch{}
+    currentPage=1;
+    renderFileSortHeaders();
+    loadDuplicates();
+  };
+  th.addEventListener('click',sort);
+  th.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sort()}});
+}
+renderFileSortHeaders();
 $('files-page-size').onchange=()=>{currentPage=1;loadDuplicates()};
 bindPager('files',()=>currentPage,goFilePage,()=>totalPages);
 $('dirs-page-size').onchange=()=>{directoryPageSize=Number($('dirs-page-size').value);directoryPage=1;renderDirectoryMatches()};
