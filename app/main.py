@@ -596,7 +596,8 @@ class Handler(BaseHTTPRequestHandler):
                 root_filter = q.get('root',['all'])[0]
                 if root_filter != 'all' and root_filter not in configured()['roots']:
                     raise ValueError('Unknown history volume')
-                limit = min(max(int(q.get('limit',['25'])[0]),1),100)
+                paged = 'page' in q or 'limit' in q
+                limit = min(max(int(q.get('limit',['25' if paged else '50'])[0]),1),100)
                 page = max(int(q.get('page',['1'])[0]),1)
                 c = connect(DB, readonly=True)
                 try:
@@ -656,8 +657,13 @@ class Handler(BaseHTTPRequestHandler):
                     c.commit()
                 finally:
                     c.close()
-                self.respond({'items':rows,'total_records':total,'total_pages':total_pages,
-                              'page':page,'limit':limit})
+                if paged:
+                    self.respond({'items':rows,'total_records':total,'total_pages':total_pages,
+                                  'page':page,'limit':limit})
+                else:
+                    # Preserve the previous array response for API clients
+                    # not requesting pagination explicitly.
+                    self.respond(rows)
             else:
                 self.send_error(404)
         except ValueError as exc:
