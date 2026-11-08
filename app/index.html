@@ -647,7 +647,7 @@ $('save-limit').onclick=async()=>{const bandwidth=Number($('limit').value),worke
   settingsFeedbackTimer=setTimeout(()=>{if($('save-limit').textContent!=='Applying…')settingsButton('idle')},2000)
 };
 let currentTab='dashboard',volumeMode=false,availableRoots=[],scheduleDrafts=[],schedulesLoaded=false;
-let historyRoot='all';
+let historyRoot='all',historyPage=1,historyPageSize=50,historyTotalPages=1;
 const expandedHistoryScans=new Set();
 function showTab(tab){currentTab=tab;const settings=tab==='settings';$('dashboard').hidden=settings;$('settings-page').hidden=!settings;
   $('tab-dashboard').classList.toggle('selected',!settings);$('tab-settings').classList.toggle('selected',settings);
@@ -700,7 +700,9 @@ document.addEventListener('keydown',event=>{
     $('scope-caption').focus();
   }
 });
-$('history-root').onchange=()=>{historyRoot=$('history-root').value;refresh()};
+$('history-root').onchange=()=>{historyRoot=$('history-root').value;historyPage=1;refresh()};
+$('history-page-size').onchange=()=>{historyPageSize=Number($('history-page-size').value);historyPage=1;refresh()};
+bindPager('history',()=>historyPage,n=>{historyPage=n;refresh()},()=>historyTotalPages);
 function markVolume(text,error=false){$('volume-feedback').textContent=text;$('volume-feedback').className=error?'error tiny':'ok tiny'}
 async function changeVolume(path,body,success){markVolume('Updating volume configuration…');try{await post(path,body);historyRoot='all';markVolume(success);await refresh();if(schedulesLoaded)await loadScheduleSettings();await loadDuplicates()}catch(e){markVolume(e.message,true)}}
 $('apply-volume-mode').onclick=async()=>{try{const v=await post('/api/volume-mode',{enabled:$('per-volume-enabled').checked});$('volume-mode-feedback').textContent=v.per_volume_enabled?'Per-volume mode enabled':'All-volume mode enabled';await refresh();await loadScheduleSettings()}catch(e){$('volume-mode-feedback').textContent=e.message}};
@@ -798,7 +800,10 @@ async function refresh(){if(stateBusy)return;stateBusy=true;try{
     $('version').textContent=startup.version?'v'+startup.version:'version unavailable';
     return;
   }
-  const [s,v,h]=await Promise.all([api('/api/status'),api('/api/volumes'),api('/api/history?'+new URLSearchParams({root:historyRoot}))]);
+  const [s,v,hResponse]=await Promise.all([api('/api/status'),api('/api/volumes'),api('/api/history?'+new URLSearchParams({root:historyRoot,page:String(historyPage),limit:String(historyPageSize)}))]);
+  const h=hResponse.items;
+  historyPage=hResponse.page;historyTotalPages=hResponse.total_pages;
+  updatePager('history',historyPage,historyTotalPages);
   // Logical total is calculated by the monitoring snapshot, not disk allocation.
   $('total-space-consumed').textContent=s.total_file_size_bytes==null?'—':bytes(s.total_file_size_bytes);
   $('total-wasted-space').textContent=s.wasted==null?'—':bytes(s.wasted);
@@ -842,7 +847,7 @@ async function refresh(){if(stateBusy)return;stateBusy=true;try{
     act('Remove',()=>{if(confirm(`Remove ${vol.root} from monitoring and delete its active inventory? Completed scan history will not change.`))changeVolume('/api/volumes/remove',{root:vol.root},'Volume removed from monitoring.')},'danger');
     tr.append(td);table.append(tr)}
   const history=$('history');history.replaceChildren();liveHistoryDuration=null;liveHistoryStart=null;
-  for(const item of h.slice(0,30)){
+  for(const item of h){
     const tr=document.createElement('tr'),isActive=s.scanning&&item.id===s.progress?.scan_id;
     cell(tr,date(item.started));cell(tr,((item.mode||'full')==='quick'?'Quick':'Full')+(item.scope&&item.scope.length===1?' · '+item.scope[0].split('/').pop():item.scope&&item.scope.length>1?' · '+item.scope.length+' volumes':''));
     const st=cell(tr,isActive?'Running':reportStatus(item.status,item.warning_count||0));
