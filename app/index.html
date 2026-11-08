@@ -112,6 +112,80 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 .report-collapse:not([open])>summary .report-caret{transform:rotate(180deg)}
 .report-content{margin-top:16px}
 .report-pager[hidden]{display:none}
+/* Fixed table geometry: content, sorting and pagination cannot move headers. */
+.dfm-fixed-table{table-layout:fixed;width:100%;border-collapse:collapse}
+.dfm-fixed-files{min-width:675px}
+.dfm-fixed-directories{min-width:885px}
+.dfm-fixed-table td:first-child,.dfm-fixed-table th:first-child{overflow-wrap:anywhere;word-break:normal;white-space:normal;min-width:0}
+.dfm-fixed-table td.num{white-space:nowrap;font-variant-numeric:tabular-nums}
+.dfm-fixed-table th.num{white-space:normal}
+.dfm-fixed-table details summary{overflow-wrap:anywhere;white-space:normal}
+.dfm-fixed-table .sort-arrow{display:inline-block;width:1em;min-width:1em;text-align:center}
+.archive-report-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.archive-report-heading{font-size:1.5rem;font-weight:750;color:#eaf2fc}
+.archive-report-sub{color:#a8bed7;font-size:.85rem;margin-top:4px}
+.archive-report-status{border:1px solid #46617b;border-radius:7px;padding:7px 10px;font-size:.85rem;font-weight:650}
+.archive-report-status.success{color:#a5efcc;background:#174937}
+.archive-report-status.warn{color:#ffe0a0;background:#5b401d}
+.archive-report-status.failed{color:#ffb6b1;background:#4f2930}
+.archive-report-status.cancelled{color:#d0d6df;background:#323d4c}
+.archive-meta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:16px 0;padding:0 0 15px;border-bottom:1px solid #35465c}
+.archive-meta-label{display:block;color:#a8bbd2;font-size:.78rem}
+.archive-meta strong{font-size:.92rem;font-weight:650}
+.archive-stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:16px 0}
+.archive-stat{background:#1b2a3d;border:1px solid #30425a;border-radius:8px;padding:13px 12px;min-width:0}
+.archive-stat span{display:block;color:#a9bfd7;font-size:.78rem}
+.archive-stat strong{display:block;font-size:clamp(1.1rem,2vw,1.5rem);overflow-wrap:anywhere;margin-top:5px;font-variant-numeric:tabular-nums}
+.archive-snapshot-note{color:#b8cbe1;background:#1c2e44;border-radius:6px;padding:11px 12px;font-size:.82rem;margin:13px 0 17px}
+.archive-report-section{background:#18273b;border:1px solid #34475f;border-radius:9px;margin-top:12px;overflow:hidden}
+.archive-report-section>summary{display:flex;align-items:center;gap:12px;padding:14px 15px;list-style:none;cursor:pointer}
+.archive-report-section>summary::-webkit-details-marker{display:none}
+.archive-report-section>summary::marker{content:''}
+.archive-report-section>summary:hover{background:#243952}
+.archive-report-section>summary:focus-visible{outline:2px solid #8dbafd;outline-offset:-3px}
+.archive-report-title{font-weight:700;font-size:1.06rem}
+.archive-report-count{background:#2c4057;color:#d0ddef;border-radius:22px;padding:3px 9px;font-size:.79rem}
+.archive-report-count.warn{background:#584122;color:#ffe0a0}
+.archive-report-caret{margin-left:auto;color:#aed0f5;font-size:1.55rem;line-height:1;transition:transform .15s}
+.archive-report-section:not([open]) .archive-report-caret{transform:rotate(180deg)}
+.archive-report-body{border-top:1px solid #35465c;padding:13px 15px 16px}
+.archive-report-table{table-layout:fixed;width:100%;border-collapse:collapse}
+.archive-file-table{min-width:720px}
+.archive-volume-table{min-width:830px}
+.archive-report-table th{background:#20334d;position:sticky;top:0;z-index:1}
+.archive-report-table th[data-sort]{cursor:pointer;user-select:none}
+.archive-report-table th[data-sort]:hover{color:#fff}
+.archive-report-table th[data-sort]:focus-visible{outline:2px solid #8dbafd;outline-offset:-2px}
+.archive-report-table th,.archive-report-table td{overflow-wrap:anywhere;word-break:normal;vertical-align:top}
+.archive-report-table td.num{white-space:nowrap;font-variant-numeric:tabular-nums}
+.archive-report-table td:first-child details summary{overflow-wrap:anywhere}
+.archive-report-table th .sort-arrow{display:inline-block;min-width:1em;width:1em;text-align:center}
+.archive-report-table .muted-path{font: .81rem/1.5 ui-monospace,Consolas,monospace;overflow-wrap:anywhere;margin:5px 0}
+.archive-report-table .scope-label{font-size:.75rem;color:#b9d6f5}
+.archive-report-table .scope-label.outside{color:#f0c788}
+.archive-row-paths{margin-top:9px;padding-top:8px;border-top:1px dashed #425b73}
+.archive-file-name{font-weight:700;overflow-wrap:anywhere}
+.archive-volume-extra{margin-top:8px;color:#b7c7dc;font-size:.8rem}
+.archive-report-search{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 320px;max-width:540px;flex-wrap:nowrap}
+.archive-report-search input{min-width:0;flex:1 1 auto;width:100%}
+.archive-report-search button{flex:0 0 auto;white-space:nowrap}
+.archive-report-toolbar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin:12px 0}
+.archive-report-toolbar select{max-width:260px}
+.archive-report-pager{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;margin-top:14px}
+.archive-pager-nav{grid-column:2;display:flex;justify-content:center;align-items:center;gap:7px}
+.archive-pager-nav button{padding:7px 9px;min-width:34px;white-space:nowrap}
+.archive-pager-nav select{min-width:80px;max-width:125px}
+.archive-pager-size{grid-column:3;justify-self:end;display:flex;gap:8px;align-items:center;white-space:nowrap}
+.archive-warning-item{padding:10px 0;border-bottom:1px solid #35465c}
+.archive-warning-item:last-child{border-bottom:none}
+.archive-warning-path{font: .81rem/1.5 ui-monospace,Consolas,monospace;overflow-wrap:anywhere;color:#d5e3f4;margin-top:5px}
+.archive-report-section .scroll{max-width:100%;overflow:auto}
+@media(max-width:680px){
+.archive-stat-grid,.archive-meta{grid-template-columns:repeat(2,minmax(0,1fr))}
+.archive-report-pager{grid-template-columns:1fr}
+.archive-pager-nav{grid-column:1}
+.archive-pager-size{grid-column:1;justify-self:end}
+}
 .report-pager{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;margin-top:14px}
 .pager-nav{grid-column:2;display:flex;justify-content:center;align-items:center;gap:7px}
 .pager-nav .pager-btn{padding:7px 9px;min-width:34px;white-space:nowrap}
@@ -146,7 +220,7 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 <summary><h2 class="report-title">Duplicate files</h2><span class="report-updated" id="duplicate-files-updated">Last updated —</span><span class="report-caret" aria-hidden="true">⌃</span></summary>
 <div class="report-content"><div class="sectiontop"><span class="muted tiny">Confirmed duplicate files · all volumes</span><div class="duplicate-search"><input type="search" id="filter" placeholder="Search filenames or full paths"><button class="secondary" id="search">Search</button></div></div>
 <div id="results-count" class="page-info" style="margin-top:12px"></div>
-<div class="scroll"><table><thead><tr><th data-file-sort="filename" tabindex="0" role="button">Filename and matching paths <span class="sort-arrow"></span></th><th class="num" data-file-sort="size" tabindex="0" role="button">File size <span class="sort-arrow"></span></th><th class="num" data-file-sort="copies" tabindex="0" role="button">Copies <span class="sort-arrow"></span></th><th class="num" data-file-sort="wasted" tabindex="0" role="button">Wasted space <span class="sort-arrow"></span></th></tr></thead><tbody id="duplicates"><tr><td colspan="4">No duplicates confirmed yet.</td></tr></tbody></table></div>
+<div class="scroll"><table class="dfm-fixed-table dfm-fixed-files"><colgroup><col><col style="width:115px"><col style="width:90px"><col style="width:145px"></colgroup><thead><tr><th data-file-sort="filename" tabindex="0" role="button">Filename and matching paths <span class="sort-arrow"></span></th><th class="num" data-file-sort="size" tabindex="0" role="button">File size <span class="sort-arrow"></span></th><th class="num" data-file-sort="copies" tabindex="0" role="button">Copies <span class="sort-arrow"></span></th><th class="num" data-file-sort="wasted" tabindex="0" role="button">Wasted space <span class="sort-arrow"></span></th></tr></thead><tbody id="duplicates"><tr><td colspan="4">No duplicates confirmed yet.</td></tr></tbody></table></div>
 <div class="report-pager">
 <div class="pager-nav" role="group" aria-label="Duplicate files pages"><button class="secondary pager-btn" id="files-first" aria-label="First page">&lt;&lt;</button><button class="secondary pager-btn" id="files-prev" aria-label="Previous page">&lt;</button><select id="files-page-select" aria-label="Duplicate files page"><option value="1">1</option></select><button class="secondary pager-btn" id="files-next" aria-label="Next page">&gt;</button><button class="secondary pager-btn" id="files-last" aria-label="Last page">&gt;&gt;</button></div>
 <label class="pager-size" for="files-page-size">Records per page <select id="files-page-size"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
@@ -154,7 +228,7 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 </div></details></section>
 <section class="panel" id="directory-matches-panel"><details class="report-collapse" id="duplicate-directories-collapse">
 <summary><h2 class="report-title">Duplicate directories</h2><span class="report-updated" id="duplicate-directories-updated">Last updated —</span><span class="report-caret" aria-hidden="true">⌃</span></summary>
-<div class="report-content"><p class="muted tiny">Exact relative filename and subdirectory structure, confirmed matching SHA-256 contents. Highest matching directory trees only. This is a read-only report; directories containing unverified files are excluded.</p><div id="directory-summary" class="muted tiny" role="status">Run a scan to analyze the inventory.</div><div id="directory-table" class="scroll" hidden><table><thead><tr><th>Matching directory locations</th><th class="num" data-dir-sort="copies" tabindex="0" role="button">Copies <span class="sort-arrow"></span></th><th class="num" data-dir-sort="files_per_copy" tabindex="0" role="button">Files / copy <span class="sort-arrow"></span></th><th class="num" data-dir-sort="size_bytes_per_copy" tabindex="0" role="button">Logical size / copy <span class="sort-arrow"></span></th><th class="num" data-dir-sort="potential_savings_bytes" tabindex="0" role="button">Potential savings <span class="sort-arrow"></span></th></tr></thead><tbody id="directory-results"></tbody></table></div>
+<div class="report-content"><p class="muted tiny">Exact relative filename and subdirectory structure, confirmed matching SHA-256 contents. Highest matching directory trees only. This is a read-only report; directories containing unverified files are excluded.</p><div id="directory-summary" class="muted tiny" role="status">Run a scan to analyze the inventory.</div><div id="directory-table" class="scroll" hidden><table class="dfm-fixed-table dfm-fixed-directories"><colgroup><col><col style="width:92px"><col style="width:120px"><col style="width:152px"><col style="width:167px"></colgroup><thead><tr><th>Matching directory locations</th><th class="num" data-dir-sort="copies" tabindex="0" role="button">Copies <span class="sort-arrow"></span></th><th class="num" data-dir-sort="files_per_copy" tabindex="0" role="button">Files / copy <span class="sort-arrow"></span></th><th class="num" data-dir-sort="size_bytes_per_copy" tabindex="0" role="button">Logical size / copy <span class="sort-arrow"></span></th><th class="num" data-dir-sort="potential_savings_bytes" tabindex="0" role="button">Potential savings <span class="sort-arrow"></span></th></tr></thead><tbody id="directory-results"></tbody></table></div>
 <div class="report-pager" id="directory-pager">
 <div class="pager-nav" role="group" aria-label="Duplicate directory pages"><button class="secondary pager-btn" id="dirs-first" aria-label="First page">&lt;&lt;</button><button class="secondary pager-btn" id="dirs-prev" aria-label="Previous page">&lt;</button><select id="dirs-page-select" aria-label="Duplicate directories page"><option value="1">1</option></select><button class="secondary pager-btn" id="dirs-next" aria-label="Next page">&gt;</button><button class="secondary pager-btn" id="dirs-last" aria-label="Last page">&gt;&gt;</button></div>
 <label class="pager-size" for="dirs-page-size">Records per page <select id="dirs-page-size"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
