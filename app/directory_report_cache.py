@@ -22,11 +22,15 @@ def get_directory_report(c, limit=100):
     # A missing cache on an existing database is normal and requires no write.
     has_table=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='directory_analysis_cache'").fetchone()
     if not has_table:
-        return {'items':[], 'returned':0,'saved':False,'stale':False}
+        return {'items':[], 'returned':0,'saved':False,'stale':False,'total_directory_roots':None}
     row=c.execute('SELECT stamp,generated_at,payload FROM directory_analysis_cache WHERE id=1').fetchone()
     if row is None:
-        return {'items':[], 'returned':0,'saved':False,'stale':False}
-    data=json.loads(row[2]); data['items']=data['items'][:max(1,min(int(limit),500))]
+        return {'items':[], 'returned':0,'saved':False,'stale':False,'total_directory_roots':None}
+    data=json.loads(row[2])
+    # Count directory locations across the saved tree matches, before
+    # applying a smaller request limit. Groups and directory paths differ.
+    data['total_directory_roots'] = sum(len(item['paths']) for item in data['items'])
+    data['items'] = data['items'][:max(1,min(int(limit),500))]
     data.update(saved=True,stale=row[0]!=inventory_stamp(c),generated_at=row[1],returned=len(data['items']))
     return data
 
