@@ -108,6 +108,7 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 .report-caret{font-size:1.6rem;line-height:1;font-weight:500;color:#a9c9ed;display:inline-block;transition:transform .15s;transform-origin:center;min-width:25px;text-align:center}
 .report-collapse:not([open])>summary .report-caret{transform:rotate(180deg)}
 .report-content{margin-top:16px}
+.report-pager[hidden]{display:none}
 .report-pager{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;margin-top:14px}
 .pager-nav{grid-column:2;display:flex;justify-content:center;align-items:center;gap:7px}
 .pager-nav .pager-btn{padding:7px 9px;min-width:34px;white-space:nowrap}
@@ -463,25 +464,63 @@ function applyRows(items){const body=$('duplicates'),prior=new Map([...body.quer
 let directoryItems=[];
 let directorySortKey='potential_savings_bytes',directorySortOrder='desc';
 let directoryLoaded=false,directoryLoading=false,directoryStatus='idle',directoryDot=0;
-// Collapsed by default; remember which sections each browser expands.
+let directoryPage=1,directoryPageSize=50,directoryReportStamp=null,directoryRenderSignature=null;
+const expandedDirectoryPaths=new Set();
+// Collapsed by default; retain state only for this browser/login session.
 const collapsibleIds=['duplicate-files-collapse','duplicate-directories-collapse','scan-history-collapse'];
 for(const id of collapsibleIds){
   const section=$(id);
-  try{section.open=localStorage.getItem('dfm-report-open:'+id)==='true'}catch{section.open=false}
+  try{section.open=sessionStorage.getItem('dfm-report-open:'+id)==='true'}catch{section.open=false}
   section.addEventListener('toggle',()=>{
-    try{localStorage.setItem('dfm-report-open:'+id,String(section.open))}catch{}
+    try{sessionStorage.setItem('dfm-report-open:'+id,String(section.open))}catch{}
   });
+}
+function clearReportCollapseSession(){
+  for(const id of collapsibleIds){try{sessionStorage.removeItem('dfm-report-open:'+id)}catch{}}
+}
+function updatePager(name,page,pages){
+  const select=$(name+'-page-select'),max=Math.max(1,pages);
+  if(select.options.length!==max||select.options[max-1]?.value!==String(max)){
+    const options=document.createDocumentFragment();
+    for(let n=1;n<=max;n++)options.append(new Option(String(n),String(n)));
+    select.replaceChildren(options);
+  }
+  select.value=String(page);
+  $(name+'-first').disabled=page<=1;
+  $(name+'-prev').disabled=page<=1;
+  $(name+'-next').disabled=page>=max;
+  $(name+'-last').disabled=page>=max;
+}
+function bindPager(name,readPage,changePage,readPages){
+  const go=n=>{const max=Math.max(1,readPages()),page=Math.max(1,Math.min(max,n));if(!Number.isInteger(page)||page===readPage())return;changePage(page)};
+  $(name+'-first').onclick=()=>go(1);
+  $(name+'-prev').onclick=()=>go(readPage()-1);
+  $(name+'-page-select').onchange=()=>go(Number($(name+'-page-select').value));
+  $(name+'-next').onclick=()=>go(readPage()+1);
+  $(name+'-last').onclick=()=>go(readPages());
 }
 try{const state=JSON.parse(localStorage.getItem('dfm-directory-sort')||'null');if(state&&['copies','files_per_copy','size_bytes_per_copy','potential_savings_bytes'].includes(state.key)&&['asc','desc'].includes(state.order)){directorySortKey=state.key;directorySortOrder=state.order}}catch{}
 function renderDirectoryMatches(){
-  const body=$('directory-results');body.replaceChildren();
   const groups=[...directoryItems].sort((a,b)=>{
     const d=Number(a[directorySortKey])-Number(b[directorySortKey]);
     return (directorySortOrder==='desc'?-d:d)||String(a.paths[0]).localeCompare(String(b.paths[0]));
   });
-  for(const group of groups){
+  const pages=Math.max(1,Math.ceil(groups.length/directoryPageSize));
+  directoryPage=Math.min(directoryPage,pages);
+  updatePager('dirs',directoryPage,pages);
+  const signature=[directoryReportStamp,groups.length,directoryPage,directoryPageSize,directorySortKey,directorySortOrder].join('|');
+  if(signature===directoryRenderSignature)return;
+  directoryRenderSignature=signature;
+  const body=$('directory-results');body.replaceChildren();
+  const start=(directoryPage-1)*directoryPageSize;
+  for(const group of groups.slice(start,start+directoryPageSize)){
     const tr=document.createElement('tr'),td=document.createElement('td'),details=document.createElement('details');
     const summary=document.createElement('summary');summary.textContent=group.paths[0];
+    details.open=expandedDirectoryPaths.has(group.paths[0]);
+    details.addEventListener('toggle',()=>{
+      if(details.open)expandedDirectoryPaths.add(group.paths[0]);
+      else expandedDirectoryPaths.delete(group.paths[0]);
+    });
     const ul=document.createElement('ul');
     for(const path of group.paths){const li=document.createElement('li');li.className='path';li.textContent=path;ul.append(li)}
     details.append(summary,ul);td.append(details);tr.append(td);
@@ -499,6 +538,8 @@ function displayDirectoryReport(data){
   directoryStatus=data.analysis_status||'idle';
   const summary=$('directory-summary');
   const busy=directoryStatus==='pending'||directoryStatus==='running'||data.stale;
+  if(directoryReportStamp!==data.generated_at){directoryReportStamp=data.generated_at||null;directoryRenderSignature=null;expandedDirectoryPaths.clear()}
+  $('directory-pager').hidden=busy||directoryStatus==='failed'||!data.saved;
   const updated=$('duplicate-directories-updated');
   const topCount=$('total-duplicate-directory-roots');
   topCount.textContent=busy?'Analyzing…':directoryStatus==='failed'||!data.saved?'—':fmt(data.total_directory_roots);
