@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Duplicate File Monitor</title>
+<title>Duplicate File Monitor</title><link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 :root{color-scheme:dark;font-family:system-ui,Segoe UI,sans-serif;background:#0b1220;color:#eaf0f9}*{box-sizing:border-box}
 body{margin:0}[hidden]{display:none!important}
@@ -175,11 +175,30 @@ $('auth-change').onclick=async()=>{try{
  await post('/api/auth/change',{username:$('auth-username').value,current_password:$('auth-current').value,password:$('auth-new').value});
  location.replace('/login');
 }catch(e){$('auth-feedback').textContent=e.message}};
-$('report-close').onclick=()=>{$('report-overlay').hidden=true};
+let reportOpener=null, reportLastScanId=null;
+function closeReport(){
+ const overlay=$('report-overlay');
+ if(overlay.hidden)return;
+ overlay.hidden=true;
+ const fallback=reportLastScanId==null?null:document.querySelector('[data-report-id="'+reportLastScanId+'"]');
+ const restore=reportOpener?.isConnected?reportOpener:fallback;
+ reportOpener=null;reportLastScanId=null;
+ if(restore&&typeof restore.focus==='function')restore.focus();
+}
+$('report-close').onclick=closeReport;
+// Only clicks on the backdrop dismiss; interactive content inside stays open.
+$('report-overlay').addEventListener('click',e=>{
+ if(e.target===e.currentTarget)closeReport();
+});
+document.addEventListener('keydown',e=>{
+ if(e.key==='Escape'&&!$('report-overlay').hidden){
+  e.preventDefault();e.stopPropagation();closeReport();
+ }
+},true);
 function reportStatus(status,count){if(status==='success')return count?'Completed with '+count+' warnings':'Completed';if(status==='failed'||status==='interrupted')return 'Failed';if(status==='cancelled')return 'Cancelled';return status}
 function reportColor(status,count){return status==='success'?(count?'#ffd595':'#a5efcc'):status==='failed'||status==='interrupted'?'#ffb6b1':status==='cancelled'?'#d0d6df':'#a6b7ce'}
 function metricDelta(n,unit=''){if(n==null)return '—';return (n>0?'+':'')+(unit==='bytes'?bytes(n):fmt(n))}
-function makeReportLink(scanId,label='View scan report'){const link=document.createElement('a');link.href='#';link.className='scan-report-link';link.textContent=label;link.addEventListener('click',e=>{e.preventDefault();openReport(scanId).catch(err=>message(err.message,true))});return link}
+function makeReportLink(scanId,label='View scan report'){const link=document.createElement('a');link.href='#';link.className='scan-report-link';link.textContent=label;link.dataset.reportId=String(scanId);link.addEventListener('click',e=>{e.preventDefault();openReport(scanId,link).catch(err=>message(err.message,true))});return link}
 
 async function renderReportDuplicates(scanId, report, target){
  const heading=document.createElement('h3');heading.textContent='Duplicate files in this scan';target.append(heading);
@@ -236,7 +255,8 @@ async function renderReportDuplicates(scanId, report, target){
  sort.onchange=()=>{page=0;load()};
  await load();
 }
-async function openReport(scanId){
+async function openReport(scanId,trigger=null){
+ const restoreFocus=trigger||document.activeElement;
  const report=await api('/api/reports/'+encodeURIComponent(scanId));
  const target=$('report-content');target.replaceChildren();
  const status=document.createElement('p');
@@ -258,13 +278,15 @@ async function openReport(scanId){
  if(report.warning_details_available===false){const p=document.createElement('p');p.textContent='Warning details unavailable — this scan predates warning tracking. An absence of recorded warnings does not mean there were none.';target.append(p)}
  else if(!report.warnings?.length){const p=document.createElement('p');p.textContent='No warnings recorded.';target.append(p)}
  else for(const warning of report.warnings){const p=document.createElement('p');p.className='path';p.textContent=`[${warning.category}] ${warning.path}: ${warning.message}`;target.append(p)}
+ reportOpener=restoreFocus;reportLastScanId=scanId;
  $('report-overlay').hidden=false;
+ $('report-close').focus();
  await renderReportDuplicates(scanId,report,target);
 }
 function message(text,bad=false){$('message').textContent=text;$('message').className=bad?'error':'ok'}
 // This value belongs to the HTML/JS currently loaded in the browser, not the
 // footer's server-supplied version. Detect deployments while polling.
-const LOADED_UI_VERSION = '0.6.5';
+const LOADED_UI_VERSION = '0.6.6';
 const RELEASES_API = 'https://api.github.com/repos/FastHowTo/duplicate-file-monitor/releases/latest';
 function versionParts(value){
   const match=String(value||'').trim().match(/^v?(\d+)\.(\d+)\.(\d+)$/i);
