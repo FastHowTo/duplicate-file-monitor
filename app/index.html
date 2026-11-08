@@ -286,7 +286,7 @@ async function openReport(scanId,trigger=null){
 function message(text,bad=false){$('message').textContent=text;$('message').className=bad?'error':'ok'}
 // This value belongs to the HTML/JS currently loaded in the browser, not the
 // footer's server-supplied version. Detect deployments while polling.
-const LOADED_UI_VERSION = '0.6.7';
+const LOADED_UI_VERSION = '0.6.8';
 const RELEASES_API = 'https://api.github.com/repos/FastHowTo/duplicate-file-monitor/releases/latest';
 function versionParts(value){
   const match=String(value||'').trim().match(/^v?(\d+)\.(\d+)\.(\d+)$/i);
@@ -367,8 +367,10 @@ function progressRender(s){lastStatus=s;const active=!!s.scanning,p=active?s.pro
   $('stop').disabled=!active||p?.can_stop===false||stopping||cleaning;
   $('stop').title=active&&p?.can_stop===false?(p.stop_disabled_reason||'Stop is unavailable during finalization'):'';
   currentStart=active&&p?.started_at?Number(p.started_at):null;
-  currentCutoff=active&&p?.duration_cutoff_at!=null?Number(p.duration_cutoff_at):null;
-  $('scan-time').hidden=finalizing;
+  // A scan is not finished until its inventory transaction commits.
+  // Keep the elapsed clock visible and running during finalization.
+  currentCutoff=null;
+  $('scan-time').hidden=false;
   if(currentStart!=null)updateElapsed();else $('scan-time').textContent=s.started?(s.ended?'Elapsed: '+duration(s.ended-s.started):'Started: '+date(s.started)):'—';
   const count=discoveredForSnapshot(p);
   if(active&&p)showDiscovered(p);else $('live-files-discovered').textContent=count===null?fmt(s.files??0):fmt(count)
@@ -752,8 +754,8 @@ async function refresh(){if(stateBusy)return;stateBusy=true;try{
 }finally{stateBusy=false}}
 async function pollLiveProgress(){if(lastRunning){try{const s=await api('/api/progress');if(s.scanning&&s.progress){showDiscovered(s.progress);const p=s.progress;
     // The faster live poll controls clock visibility too, avoiding a stale 5-second refresh.
-    $('scan-time').hidden=p.lifecycle==='finalizing'||p.stage==='finalizing'||p.stage==='complete';
-    if(p.duration_cutoff_at!=null){currentCutoff=Number(p.duration_cutoff_at);updateElapsed();}
+    $('scan-time').hidden=false;
+    if(currentStart!=null)updateElapsed();
     // Update confirmed *scan-scope* results on every 500ms progress tick.
     // Do not wait for the slower status/history refresh, or show global totals.
     if(p.metrics_ready===true&&p.metric_scope==='scan'){
