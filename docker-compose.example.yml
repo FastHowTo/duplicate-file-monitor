@@ -1,6 +1,6 @@
 services:
   duplicate-file-monitor:
-    image: ghcr.io/fasthowto/duplicate-file-monitor:0.6.6
+    image: ghcr.io/fasthowto/duplicate-file-monitor:0.6.7
     container_name: duplicate-file-monitor
     # Optional: match host read permissions; if changed, /data must be writable.
     # user: "1000:1000"

@@ -286,7 +286,7 @@ async function openReport(scanId,trigger=null){
 function message(text,bad=false){$('message').textContent=text;$('message').className=bad?'error':'ok'}
 // This value belongs to the HTML/JS currently loaded in the browser, not the
 // footer's server-supplied version. Detect deployments while polling.
-const LOADED_UI_VERSION = '0.6.6';
+const LOADED_UI_VERSION = '0.6.7';
 const RELEASES_API = 'https://api.github.com/repos/FastHowTo/duplicate-file-monitor/releases/latest';
 function versionParts(value){
   const match=String(value||'').trim().match(/^v?(\d+)\.(\d+)\.(\d+)$/i);
@@ -400,7 +400,7 @@ function progressRender(s){lastStatus=s;const active=!!s.scanning,p=active?s.pro
     else if(cleaning){$('stage-name').textContent='Cleaning up';detailsLines(['Finishing database cleanup…']);}
     else if(stopping){$('stage-name').textContent='Stopping scan';detailsLines(['Stop requested. Finishing active work…']);}
     else if(preparing){$('stage-name').textContent='Preparing scan';detailsLines([p?.preparing_step||'Preparing inventory…']);}
-    else if(p.stage==='enumerating'){$('stage-name').textContent='File Discovery';const line=document.createElement('span');line.textContent='Discovering files · '+fmt(p.directories_visited||0)+' directories visited · '+(p.current_path||'');const dots=document.createElement('span');dots.id='discovery-dots';dots.className='discovery-dots';dots.textContent='.'.repeat(discoveryDot);$('stage-details').replaceChildren(line,dots)}
+    else if(p.stage==='enumerating'){$('stage-name').textContent='File Discovery';detailsLines(['Discovering files…'])}
     else{const st=stageProgress(p);$('stage-name').textContent=st.name;meter.hidden=false;fill.style.width=Math.max(0,Math.min(100,st.pct)).toFixed(1)+'%';$('stage-pct').textContent=st.pct.toFixed(1)+'%';detailsLines(st.lines)}
   }else if(s.status==='success'){$('stage-name').textContent=reportStatus(s.status,s.warning_count||0);stageName.classList.add(s.warning_count?'stage-warning':'stage-complete');meter.classList.add(s.warning_count?'warning':'complete');meter.hidden=false;fill.style.width='100%';$('stage-pct').textContent='100%';detailsLines([s.warning_count?('Scan completed with '+s.warning_count+' recoverable warnings'):'Scan completed successfully'])}
   else if(s.status==='failed'||s.status==='cancelled'||s.status==='interrupted'){

@@ -1,6 +1,6 @@
 # Duplicate File Monitor (DFM)
 
-**Version 0.6.6** — A read-only, Docker-hosted duplicate-file and duplicate-directory inventory tool for network storage.
+**Version 0.6.7** — A read-only, Docker-hosted duplicate-file and duplicate-directory inventory tool for network storage.
 
 DFM inventories selected directories, identifies SHA-256-confirmed duplicate files, analyzes identical directory trees, and estimates redundant logical storage. **It never deletes, renames, moves, or alters source files.** Cleanup is a separate, manual administrator decision.
 
@@ -24,7 +24,7 @@ DFM inventories selected directories, identifies SHA-256-confirmed duplicate fil
 ## Install with Docker Compose
 
 1. Mount the storage you want to scan on the Docker host first.
-2. Copy `docker-compose.example.yml` to `docker-compose.yml`. The example uses the published image `ghcr.io/fasthowto/duplicate-file-monitor:0.6.6` (no local build required).
+2. Copy `docker-compose.example.yml` to `docker-compose.yml`. The example uses the published image `ghcr.io/fasthowto/duplicate-file-monitor:0.6.7` (no local build required).
 3. Change `/path/to/your/mounted/files` to the actual host mount path; add more **read-only** mounts and colon-delimited `SCAN_ROOTS` paths as needed.
 4. Start DFM:
 
@@ -32,7 +32,7 @@ DFM inventories selected directories, identifies SHA-256-confirmed duplicate fil
 sudo docker compose up -d
 ```
 
-**Authentication (mandatory since v0.6.4):** Add a private `DFM_SETUP_TOKEN` (at least 24 random characters, e.g. output of `openssl rand -hex 32`) to your existing Compose environment before upgrading. By default, login requires HTTPS so the Secure session cookie works. First visit: choose your username and a 12+-character password, and enter the setup token. For a trusted HTTP-only LAN installation set `DFM_COOKIE_SECURE: "false"` explicitly. A separate `DFM_METRICS_TOKEN` (at least 24 random characters) may be configured for Prometheus bearer-token scrapes. **Read [v0.6.6 release notes](RELEASE_NOTES_0.6.6.md) before upgrading**, especially for monitoring authentication and the existing-data-volume backup.
+**Authentication (mandatory since v0.6.4):** Add a private `DFM_SETUP_TOKEN` (at least 24 random characters, e.g. output of `openssl rand -hex 32`) to your existing Compose environment before upgrading. By default, login requires HTTPS so the Secure session cookie works. First visit: choose your username and a 12+-character password, and enter the setup token. For a trusted HTTP-only LAN installation set `DFM_COOKIE_SECURE: "false"` explicitly. A separate `DFM_METRICS_TOKEN` (at least 24 random characters) may be configured for Prometheus bearer-token scrapes. **Read [v0.6.7 release notes](RELEASE_NOTES_0.6.7.md) before upgrading**, especially for monitoring authentication and the existing-data-volume backup.
 
 The **user's browser**, not the DFM server, checks GitHub Releases every six hours for a newer published, non-prerelease version. This is a browser-only request to GitHub; an offline browser simply does not display an update notice. The server does not contact GitHub for update checks and never installs updates automatically.
 
@@ -77,7 +77,7 @@ Schedule intervals and MQTT broker settings are configured in the DFM dashboard,
 
 **Mount validation notes:** `REQUIRE_MOUNT_TYPES` checks `/proc/self/mountinfo` **inside the container**. Docker bind mounts report their underlying filesystem type (e.g. ZFS, XFS or CIFS), not a literal `bind` type. The check requires the configured scan root itself to be a mountpoint and does not replace checking that your host's remote storage is genuinely mounted before starting DFM. Existing CIFS-specific cache-remount handling is retained only for CIFS filesystems, never applied to local ZFS/XFS/NFS.
 
-**Enumerating directory-heavy trees:** The dashboard reports directories visited and the current directory, and Docker logs record an enumeration heartbeat about every 45 seconds. Discovery prefers diving into subdirectories while distributing workers across selected volumes, helping expose files earlier in deeply nested trees.
+**File discovery:** The dashboard shows a simple discovery status and the Files Discovered count, without directory counters or current directory paths. Docker logs retain operational heartbeat diagnostics during long directory enumeration.
 
 ## License
 
