@@ -76,6 +76,7 @@ input,select{border:1px solid #40536d;background:#0d1728;color:white;padding:9px
 #message{min-height:1.3em;margin:4px 0}.error{color:#ff7777}.ok{color:#83d6b2}
 .metric-grid.global-summary-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.metric-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:15px}.stat{min-width:0;background:#1b2a3d;border:1px solid #2a3f58;border-radius:10px;padding:16px}
 .stat-label{color:#b1c2d6;font-size:.87rem}.stat-value{font-size:clamp(1.4rem,2.5vw,2.05rem);font-weight:750;margin-top:8px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+#total-duplicate-directory-roots.analysis-active{white-space:nowrap;overflow-wrap:normal;font-size:clamp(1.1rem,1.75vw,1.55rem)}
 #lifetime{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.lifetime-value{font-size:1.35rem;font-weight:700;font-variant-numeric:tabular-nums}
 .stage-line{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-top:10px}#stage-name{font-size:1.17rem;font-weight:750}#stage-pct{font-size:1.17rem;font-weight:750;font-variant-numeric:tabular-nums}
 .meter{height:12px;background:#2a3950;border-radius:8px;overflow:hidden;margin:9px 0 10px}.meter div{height:100%;width:0;background:#65abff;transition:width .2s}.meter.failed div{background:#ed505b}
@@ -745,8 +746,8 @@ function showDiscovered(p){
   $('live-files-discovered').textContent=count===null?'—':fmt(count);
 }
 function stageProgress(p){const isFast=p.stage==='partial_hashing';const isFull=p.stage==='full_hashing';
-  if(isFast){const total=Number(p.partial_files_total||0),done=Number(p.partial_files_checked||0);return {name:'Fast Comparison',pct:total?100*done/total:100,lines:[`Comparing file ${fmt(Math.min(done,total))} of ${fmt(total)}`]}}
-  if(isFull){const total=Number(p.full_hash_bytes_total||0),done=Number(p.full_hash_bytes_done||0),files=Number(p.full_files_checked||0);return {name:'Full Comparison',pct:total?100*done/total:100,lines:[`Comparing file ${fmt(Math.min(files,p.full_files_total||0))} of ${fmt(p.full_files_total||0)}`,compareBytes(done,total)]}}
+  if(isFast){return {name:'Fast Comparison',pct:null,lines:['Comparing candidate files'+'.'.repeat(1+(Math.floor(Date.now()/500)%3))]}}
+  if(isFull){const total=Number(p.full_hash_bytes_total||0),done=Number(p.full_hash_bytes_done||0);return {name:'Full Comparison',pct:total?100*done/total:100,lines:[compareBytes(done,total)]}}
   return {name:'File Discovery',pct:null,lines:[]};
 }
 function compareBytes(done,total){const units=['B','KiB','MiB','GiB','TiB','PiB'];let magnitude=0,x=total;while(x>=1024&&magnitude<units.length-1){x/=1024;magnitude++}const index=Math.max(0,magnitude-1),divisor=1024**index;const render=n=>(n/divisor).toLocaleString(undefined,{minimumFractionDigits:index?1:0,maximumFractionDigits:index?1:0});return `Bytes compared: ${render(done)} ${units[index]} of ${render(total)} ${units[index]}`}
@@ -803,11 +804,11 @@ function progressRender(s){lastStatus=s;const active=!!s.scanning,p=active?s.pro
     else if(stopping){$('stage-name').textContent='Stopping scan';detailsLines(['Stop requested. Finishing active work…']);}
     else if(preparing){$('stage-name').textContent='Preparing scan';detailsLines([p?.preparing_step||'Preparing inventory…']);}
     else if(p.stage==='enumerating'){$('stage-name').textContent='File Discovery';detailsLines(['Discovering files…'])}
-    else{const st=stageProgress(p);$('stage-name').textContent=st.name;meter.hidden=false;fill.style.width=Math.max(0,Math.min(100,st.pct)).toFixed(1)+'%';$('stage-pct').textContent=st.pct.toFixed(1)+'%';detailsLines(st.lines)}
+    else{const st=stageProgress(p);$('stage-name').textContent=st.name;meter.hidden=st.pct==null;if(st.pct!=null){fill.style.width=Math.max(0,Math.min(100,st.pct)).toFixed(1)+'%';$('stage-pct').textContent=st.pct.toFixed(1)+'%'}detailsLines(st.lines)}
   }else if(s.status==='success'){$('stage-name').textContent=reportStatus(s.status,s.warning_count||0);stageName.classList.add(s.warning_count?'stage-warning':'stage-complete');meter.classList.add(s.warning_count?'warning':'complete');meter.hidden=false;fill.style.width='100%';$('stage-pct').textContent='100%';detailsLines([s.warning_count?('Scan completed with '+s.warning_count+' recoverable warnings'):'Scan completed successfully'])}
   else if(s.status==='failed'||s.status==='cancelled'||s.status==='interrupted'){
     const st=p?stageProgress(p):{pct:0,name:'File Discovery',lines:[]};const pct=st.pct==null?0:Math.max(0,Math.min(100,st.pct));$('stage-name').textContent=reportStatus(s.status,s.warning_count||0);
-    const stageHasPercent=!!p&&['partial_hashing','full_hashing'].includes(p.stage);
+    const stageHasPercent=!!p&&p.stage==='full_hashing';
     meter.hidden=!stageHasPercent;const outcome=s.status==='cancelled'?'cancelled':'failed';meter.classList.add(outcome);stageName.classList.add('stage-'+outcome);fill.style.width=pct.toFixed(1)+'%';$('stage-pct').textContent=stageHasPercent?pct.toFixed(1)+'%':'';
     const lines=s.status==='failed'?['ERROR',String(s.error||'Unknown scan error')]:s.status==='cancelled'?['Scan cancelled',...st.lines]:['Scan interrupted. Previous published inventory retained.',...st.lines];
     detailsLines(lines,s.status==='failed');if(s.status==='failed'&&p?.stage==='full_hashing')detailsLines([...lines,...st.lines],true);
@@ -906,6 +907,7 @@ function displayDirectoryReport(data){
   $('directory-pager').hidden=busy||directoryStatus==='failed'||!data.saved;
   const updated=$('duplicate-directories-updated');
   const topCount=$('total-duplicate-directory-roots');
+  topCount.classList.toggle('analysis-active',busy&&directoryStatus!=='failed');
   if(busy&&directoryStatus!=='failed'){
     // Reuse the existing directory-analysis ellipsis animation clock.
     const dots=document.createElement('span');
@@ -913,7 +915,7 @@ function displayDirectoryReport(data){
     dots.className='discovery-dots';
     dots.setAttribute('aria-hidden','true');
     dots.textContent='.'.repeat(1+(directoryDot%3));
-    topCount.replaceChildren('Analyzing ',dots);
+    topCount.replaceChildren('Analyzing',dots);
   }else{
     topCount.textContent=directoryStatus==='failed'||!data.saved?'—':fmt(data.total_directory_roots);
   }
@@ -1302,7 +1304,7 @@ async function pollLiveProgress(){if(lastRunning){try{const s=await api('/api/pr
       $('progress-meter').hidden=true;$('stage-pct').textContent='';
       detailsLines(finalizing?finalizingLines(p):[cleaning?'Finishing database cleanup…':stopping?'Stop requested. Finishing active work…':(p.preparing_step||'Preparing inventory…')]);
     }else if((p.stage==='full_hashing'||p.stage==='partial_hashing')&&renderedProgress?.stage===p.stage){
-      const st=stageProgress(p);$('stage-pct').textContent=st.pct.toFixed(1)+'%';$('progress-fill').style.width=st.pct.toFixed(1)+'%';detailsLines(st.lines);
+      const st=stageProgress(p);$('progress-meter').hidden=st.pct==null;$('stage-pct').textContent=st.pct==null?'':st.pct.toFixed(1)+'%';if(st.pct!=null)$('progress-fill').style.width=Math.max(0,Math.min(100,st.pct)).toFixed(1)+'%';detailsLines(st.lines);
       if(p.metrics_ready===true){$('scan-duplicates').textContent=fmt(p.confirmed_duplicate_copies);$('scan-wasted').textContent=bytes(p.confirmed_wasted_bytes)}
     }
   }}catch{}}
