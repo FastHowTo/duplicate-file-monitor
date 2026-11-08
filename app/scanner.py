@@ -597,10 +597,12 @@ def _stage_scan_duplicate_groups(c, roots, control):
 
 
 def list_scan_duplicate_groups(c, scan_id, report_data, limit=25, offset=0,
-                               search='', root='', sort='wasted'):
+                               search='', root='', sort='wasted', direction='desc'):
     """Paginate exact archived duplicate groups, never today's global files."""
-    if sort not in ('wasted', 'size', 'copies'):
+    if sort not in ('wasted', 'size', 'copies', 'filename'):
         raise ValueError('Unsupported duplicate snapshot sort')
+    if direction not in ('asc', 'desc'):
+        raise ValueError('Unsupported duplicate snapshot sort direction')
     if root and root not in report_data.get('roots', []):
         raise ValueError('Volume is not part of this scan')
     if not report_data.get('duplicate_snapshot_available'):
@@ -609,14 +611,26 @@ def list_scan_duplicate_groups(c, scan_id, report_data, limit=25, offset=0,
     limit = min(100, max(1, int(limit)))
     offset = max(0, int(offset))
     search = (search or '')[:200].casefold()
-    order = {'wasted': 'wasted_bytes DESC', 'size': 'size_bytes DESC',
-             'copies': 'total_copies DESC'}[sort] + ',group_no ASC'
+    if sort == 'filename':
+        # Archived paths are stored compressed and must remain immutable.
+        # Derive the representative filename on demand for this sorting mode,
+        # without modifying the archive or accessing source storage.
+        def archived_filename(blob):
+            paths = json.loads(zlib.decompress(blob).decode('utf-8'))
+            return os.path.basename(paths[0]['path']) if paths else ''
+        c.create_function('dfm_archived_filename', 1, archived_filename, deterministic=True)
+    key = {'wasted': 'wasted_bytes', 'size': 'size_bytes',
+           'copies': 'total_copies',
+           'filename': 'dfm_archived_filename(paths_blob) COLLATE NOCASE'}[sort]
+    order = key + (' ASC' if direction == 'asc' else ' DESC') + ',group_no ASC'
     base_sql = 'SELECT * FROM scan_duplicate_groups WHERE scan_id=? ORDER BY ' + order
     def unpack(row):
         paths = json.loads(zlib.decompress(row['paths_blob']).decode('utf-8'))
         return {'size_bytes': row['size_bytes'], 'sha256': row['sha256'],
                 'scoped_copies': row['scoped_copies'], 'copies': row['total_copies'],
-                'wasted_bytes': row['wasted_bytes'], 'paths': paths}
+                'wasted_bytes': row['wasted_bytes'],
+                'representative_filename': os.path.basename(paths[0]['path']) if paths else '',
+                'paths': paths}
     if not search and not root:
         total = int(report_data.get('duplicate_group_count', 0))
         rows = c.execute(base_sql + ' LIMIT ? OFFSET ?', (scan_id, limit, offset))
@@ -639,7 +653,7 @@ def list_scan_duplicate_groups(c, scan_id, report_data, limit=25, offset=0,
     return {'available': True, 'items': items, 'total_groups': total,
             'total_pages': max(1, (total + limit - 1) // limit),
             'offset': offset, 'limit': limit, 'has_more': offset + len(items) < total,
-            'sort': sort, 'source': 'immutable_scan_snapshot'}
+            'sort': sort, 'order': direction, 'source': 'immutable_scan_snapshot'}
 
 def _previous_snapshot(c,root):
     row=c.execute("""SELECT s.ended,v.file_count,v.duplicate_copies,v.wasted_bytes,r.report_json
