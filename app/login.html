@@ -48,6 +48,11 @@ el('login-form').addEventListener('submit',async e=>{
   const response=await fetch(setup?'/api/auth/setup':'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   const data=await response.json();
   if(!response.ok)throw Error(data.error||'Authentication failed');
+  // A newly authenticated login starts with collapsed reports, even if
+  // the previous tab session was restored by the browser.
+  for(const id of ['duplicate-files-collapse','duplicate-directories-collapse','scan-history-collapse']){
+    try{sessionStorage.removeItem('dfm-report-open:'+id)}catch{}
+  }
   location.replace('/');
  }catch(err){el('error').textContent=err.message;el('submit').disabled=false}
 });
