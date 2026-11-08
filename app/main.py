@@ -17,8 +17,8 @@ from urllib.parse import parse_qs, urlsplit
 
 import auth
 from version import VERSION
-from directory_matches import duplicate_directories
-from directory_report_cache import get_directory_report, refresh_directory_report
+from directory_report_cache import get_directory_report
+from directory_analysis import AutomaticDirectoryAnalysis
 from observability import monitoring_snapshot, prometheus, get_config, validate_config, mqtt_worker
 from configuration import (volume_config, add_volume, remove_volume,
                            relocate_volume, save_volume_mode)
@@ -44,6 +44,7 @@ UI = Path(__file__).with_name('index.html')
 FAVICON = Path(__file__).with_name('favicon.svg')
 LOGIN = Path(__file__).with_name('login.html')
 _volume_stats_cache = {'key':None,'metrics':{}}
+directory_analysis = AutomaticDirectoryAnalysis(DB)
 
 
 def bandwidth_setting():
@@ -66,12 +67,15 @@ def scan_workers_setting():
 
 def run_locked(roots, control, mode='full', preserved=()):
     global active_control
+    published = False
     try:
         print('Scan starting with roots: ' + json.dumps(roots), flush=True)
         opts = {'mode':mode} if mode != 'full' else {}
         if preserved:
             opts['preserved_roots'] = preserved
-        print(json.dumps(scan(DB, roots, control, **opts)), flush=True)
+        result = scan(DB, roots, control, **opts)
+        print(json.dumps(result), flush=True)
+        published = result.get('status') == 'success'
     except Exception as exc:
         print('Scan ended without publication: ' + repr(exc), flush=True)
         if isinstance(exc, sqlite3.Error):
@@ -79,10 +83,12 @@ def run_locked(roots, control, mode='full', preserved=()):
                   'name:', getattr(exc, 'sqlite_errorname', None), flush=True)
         traceback.print_exc()
     finally:
-        # Cleanup and SQLite connection closure are completed by scan()
-        # before the lock is released. Do not enable another run earlier.
+        # Scanner finalization, report publication and connection closure
+        # finish before a separate directory-analysis operation is queued.
         active_control = None
         lock.release()
+        if published:
+            directory_analysis.request()
 
 
 def configured():
@@ -508,7 +514,17 @@ class Handler(BaseHTTPRequestHandler):
                 q = parse_qs(parsed.query)
                 limit = min(max(int(q.get('limit',['100'])[0]),1),500)
                 c=connect(DB,readonly=True)
-                try: self.respond(get_directory_report(c,limit=limit))
+                try:
+                    data = get_directory_report(c,limit=limit)
+                    status = directory_analysis.status()
+                    # Never expose an old tree list as actionable cleanup data.
+                    if data['stale'] and status not in ('pending','running','failed'):
+                        status = 'pending'
+                    if status in ('pending','running','failed') or data['stale']:
+                        data['items'] = []
+                        data['returned'] = 0
+                    data['analysis_status'] = status
+                    self.respond(data)
                 finally: c.close()
             elif path == '/api/duplicates':
                 q = parse_qs(parsed.query)
@@ -675,11 +691,6 @@ class Handler(BaseHTTPRequestHandler):
             if not startup_ready.is_set():
                 self.respond({'error': ('Database startup failed: '+startup_error) if startup_error else ('Database initialization: ' + startup_phase)}, 503)
                 return
-            if path == '/api/duplicate-directories/analyze':
-                c=connect(DB)
-                try: self.respond(refresh_directory_report(c, limit=500))
-                finally: c.close()
-                return
             if path in ('/api/scan', '/api/scan/quick'):
                 mode = 'quick' if path.endswith('/quick') else 'full'
                 data = self.body_json()
@@ -771,6 +782,7 @@ class Handler(BaseHTTPRequestHandler):
                         restore_volume(DB,root,configured()['roots'])
                 finally:
                     lock.release()
+                directory_analysis.request()
                 self.respond({'ok':True,'root':root})
                 return
             if path == '/api/volume-mode':
@@ -798,6 +810,7 @@ class Handler(BaseHTTPRequestHandler):
                                                data.get('new_root'),required)
                 finally:
                     lock.release()
+                directory_analysis.request()
                 self.respond({'ok':True,**result})
                 return
             if path == '/api/schedules':
@@ -842,6 +855,7 @@ def bootstrap_database():
         startup_ready.set()
         print('Database startup completed in %.2fs (no startup writes)' %
               (time.monotonic()-begin),flush=True)
+        directory_analysis.start()
         threading.Thread(target=scheduler, daemon=True).start()
         threading.Thread(target=mqtt_worker, args=(DB,monitoring), daemon=True,name='mqtt-publisher').start()
     except Exception as exc:

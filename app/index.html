@@ -126,7 +126,7 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 <div class="scroll"><table><thead><tr><th>Matching copies and full paths</th><th class="num">Copies</th><th class="num">Wasted</th></tr></thead><tbody id="duplicates"><tr><td colspan="3">No duplicates confirmed yet.</td></tr></tbody></table></div>
 <div class="page-controls"><div class="page-info" id="page-count">Page 1 of 1</div><div class="controls-right"><button class="secondary" id="first">First</button><button class="secondary" id="prev">Previous</button><label for="jump-page">Page</label><input type="number" min="1" id="jump-page" value="1"><button class="secondary" id="jump">Go</button><button class="secondary" id="next">Next</button><button class="secondary" id="last">Last</button></div></div>
 </section>
-<section class="panel" id="directory-matches-panel"><div class="sectiontop"><h2>Duplicate directory trees</h2><button class="secondary" id="directory-refresh">Analyze inventory</button></div><p class="muted tiny">Exact relative filename and subdirectory structure, confirmed matching SHA-256 contents. Highest matching directory trees only. This is a read-only report; directories containing unverified files are excluded.</p><div id="directory-summary" class="muted tiny">Select Analyze inventory to calculate matches.</div><div class="scroll"><table><thead><tr><th>Matching directory locations</th><th class="num" data-dir-sort="copies" tabindex="0" role="button">Copies <span class="sort-arrow"></span></th><th class="num" data-dir-sort="files_per_copy" tabindex="0" role="button">Files / copy <span class="sort-arrow"></span></th><th class="num" data-dir-sort="size_bytes_per_copy" tabindex="0" role="button">Logical size / copy <span class="sort-arrow"></span></th><th class="num" data-dir-sort="potential_savings_bytes" tabindex="0" role="button">Potential savings <span class="sort-arrow"></span></th></tr></thead><tbody id="directory-results"></tbody></table></div></section>
+<section class="panel" id="directory-matches-panel"><div class="sectiontop"><h2>Duplicate directory trees</h2></div><p class="muted tiny">Exact relative filename and subdirectory structure, confirmed matching SHA-256 contents. Highest matching directory trees only. This is a read-only report; directories containing unverified files are excluded.</p><div id="directory-summary" class="muted tiny" role="status">Run a scan to analyze the inventory.</div><div id="directory-table" class="scroll" hidden><table><thead><tr><th>Matching directory locations</th><th class="num" data-dir-sort="copies" tabindex="0" role="button">Copies <span class="sort-arrow"></span></th><th class="num" data-dir-sort="files_per_copy" tabindex="0" role="button">Files / copy <span class="sort-arrow"></span></th><th class="num" data-dir-sort="size_bytes_per_copy" tabindex="0" role="button">Logical size / copy <span class="sort-arrow"></span></th><th class="num" data-dir-sort="potential_savings_bytes" tabindex="0" role="button">Potential savings <span class="sort-arrow"></span></th></tr></thead><tbody id="directory-results"></tbody></table></div></section>
 
 <section class="panel"><div class="sectiontop"><h2>Scan history</h2><label>Volume <select id="history-root"><option value="all">All volumes</option></select></label></div><div class="scroll"><table><thead><tr><th>Started</th><th>Type</th><th>Status</th><th class="num">Files</th><th class="num">Duplicates</th><th class="num">Wasted</th><th class="num">Duration</th><th>Volume details / report</th></tr></thead><tbody id="history"><tr><td colspan="8">No scan history.</td></tr></tbody></table></div></section>
 <p id="disk-info" class="muted tiny"></p>
@@ -427,7 +427,7 @@ function applyRows(items){const body=$('duplicates'),prior=new Map([...body.quer
 }
 let directoryItems=[];
 let directorySortKey='potential_savings_bytes',directorySortOrder='desc';
-let directoryLoaded=false,directoryLoading=false,lastDirectoryScanId=null;
+let directoryLoaded=false,directoryLoading=false,directoryStatus='idle',directoryDot=0;
 try{const state=JSON.parse(localStorage.getItem('dfm-directory-sort')||'null');if(state&&['copies','files_per_copy','size_bytes_per_copy','potential_savings_bytes'].includes(state.key)&&['asc','desc'].includes(state.order)){directorySortKey=state.key;directorySortOrder=state.order}}catch{}
 function renderDirectoryMatches(){
   const body=$('directory-results');body.replaceChildren();
@@ -452,27 +452,47 @@ function renderDirectoryMatches(){
   }
 }
 function displayDirectoryReport(data){
+  directoryStatus=data.analysis_status||'idle';
+  const summary=$('directory-summary');
+  const busy=directoryStatus==='pending'||directoryStatus==='running'||data.stale;
+  $('directory-table').hidden=busy||directoryStatus==='failed'||!data.saved;
+  if(busy&&directoryStatus!=='failed'){
+    directoryItems=[];renderDirectoryMatches();
+    const dots=document.createElement('span');dots.id='directory-dots';dots.className='discovery-dots';
+    dots.setAttribute('aria-hidden','true');dots.textContent='.'.repeat(1+(directoryDot%3));
+    summary.replaceChildren('Analyzing inventory ',dots);
+    return;
+  }
+  if(directoryStatus==='failed'){
+    directoryItems=[];renderDirectoryMatches();
+    summary.textContent='Directory analysis failed. The next completed scan will retry automatically.';
+    return;
+  }
+  if(!data.saved){
+    directoryItems=[];renderDirectoryMatches();
+    summary.textContent='Run a scan to analyze the inventory.';
+    return;
+  }
   directoryItems=data.items||[];renderDirectoryMatches();
-  if(!data.saved){$('directory-summary').textContent='No saved analysis. Select Analyze inventory to calculate matches.';return}
   const when=data.generated_at?new Date(data.generated_at*1000).toLocaleString():'unknown time';
-  $('directory-summary').textContent=fmt(data.returned)+' duplicate directory groups (up to 500 saved). '+
-    (data.stale?'STALE — inventory has changed since analysis. Select Analyze inventory to refresh. ':'Current inventory snapshot. ')+
+  summary.textContent=fmt(data.returned)+' duplicate directory groups (up to 500 saved). Current inventory snapshot. '+
     'Analyzed '+when+'. No source files were accessed.';
 }
 async function loadSavedDirectoryMatches(){
   if(directoryLoading)return;
   directoryLoading=true;
   try{displayDirectoryReport(await api('/api/duplicate-directories?limit=500'));directoryLoaded=true}
-  catch(e){$('directory-summary').textContent='Unable to load saved directory analysis: '+e.message}
+  catch(e){$('directory-summary').textContent='Unable to load directory analysis: '+e.message}
   finally{directoryLoading=false}
 }
-async function loadDirectoryMatches(){
-  $('directory-refresh').disabled=true;
-  $('directory-summary').textContent='Analyzing committed file inventory…';
-  try{displayDirectoryReport(await post('/api/duplicate-directories/analyze',{}));directoryLoaded=true}
-  catch(e){$('directory-summary').textContent='Directory analysis failed: '+e.message}
-  finally{$('directory-refresh').disabled=false}
+async function pollDirectoryAnalysis(){
+  if(backendReady)await loadSavedDirectoryMatches();
+  setTimeout(pollDirectoryAnalysis,directoryStatus==='pending'||directoryStatus==='running'?1500:8000);
 }
+setInterval(()=>{
+  const dots=$('directory-dots');
+  if(dots){directoryDot=(directoryDot+1)%3;dots.textContent='.'.repeat(directoryDot+1)}
+},500);
 for(const th of document.querySelectorAll('#directory-matches-panel th[data-dir-sort]')){
   const sort=()=>{const key=th.dataset.dirSort;if(directorySortKey===key)directorySortOrder=directorySortOrder==='desc'?'asc':'desc';else{directorySortKey=key;directorySortOrder='desc'};
     try{localStorage.setItem('dfm-directory-sort',JSON.stringify({key:directorySortKey,order:directorySortOrder}))}catch{}
@@ -480,7 +500,6 @@ for(const th of document.querySelectorAll('#directory-matches-panel th[data-dir-
   th.addEventListener('click',sort);
   th.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sort()}});
 }
-$('directory-refresh').onclick=loadDirectoryMatches;
 async function loadDuplicates(){if(dupeLoading)return;dupeLoading=true;try{const limit=Number($('page-size').value),offset=(currentPage-1)*limit;
   const qs=new URLSearchParams({search:dupeQuery,limit:String(limit),offset:String(offset),sort:$('sort').value,order:$('order').value});
   const data=await api('/api/duplicates?'+qs);totalPages=Math.max(1,data.total_pages);totalGroups=data.total_groups;
@@ -737,7 +756,6 @@ async function refresh(){if(stateBusy)return;stateBusy=true;try{
   $('current-report-link').replaceChildren();
   if(!s.scanning&&s.id&&s.status!=='running')$('current-report-link').append(makeReportLink(s.id));
   const scanId=s.progress?.scan_id??s.id??null;
-  if(directoryLoaded&&!s.scanning&&scanId!=null&&scanId!==lastDirectoryScanId){lastDirectoryScanId=scanId;loadSavedDirectoryMatches()}
   if(scanId!==loadedScanId&&s.scanning&&s.progress?.stage==='enumerating'){/* report still represents last published inventory */}
   if(!loadedSource||Date.now()-lastDupeRefresh>=10000||wasRunning!==lastRunning)await loadDuplicates();
 }catch(e){
@@ -781,5 +799,5 @@ async function pollLiveProgress(){if(lastRunning){try{const s=await api('/api/pr
     }
   }}catch{}}
   setTimeout(pollLiveProgress,lastRunning?500:1500)}
-async function poll(){await refresh();setTimeout(poll,!backendReady?2000:lastRunning?5000:30000)}if(location.protocol==='http:'||location.protocol==='https:')loadAuth().catch(()=>location.replace('/login'));poll();pollLiveProgress();
+async function poll(){await refresh();setTimeout(poll,!backendReady?2000:lastRunning?5000:30000)}if(location.protocol==='http:'||location.protocol==='https:')loadAuth().catch(()=>location.replace('/login'));poll();pollLiveProgress();pollDirectoryAnalysis();
 </script></body></html>
