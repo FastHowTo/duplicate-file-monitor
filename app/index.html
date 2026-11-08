@@ -906,7 +906,17 @@ function displayDirectoryReport(data){
   $('directory-pager').hidden=busy||directoryStatus==='failed'||!data.saved;
   const updated=$('duplicate-directories-updated');
   const topCount=$('total-duplicate-directory-roots');
-  topCount.textContent=busy?'Analyzing…':directoryStatus==='failed'||!data.saved?'—':fmt(data.total_directory_roots);
+  if(busy&&directoryStatus!=='failed'){
+    // Reuse the existing directory-analysis ellipsis animation clock.
+    const dots=document.createElement('span');
+    dots.id='directory-total-dots';
+    dots.className='discovery-dots';
+    dots.setAttribute('aria-hidden','true');
+    dots.textContent='.'.repeat(1+(directoryDot%3));
+    topCount.replaceChildren('Analyzing ',dots);
+  }else{
+    topCount.textContent=directoryStatus==='failed'||!data.saved?'—':fmt(data.total_directory_roots);
+  }
   if(busy&&directoryStatus!=='failed'){
     updated.replaceChildren('Analyzing inventory ',Object.assign(document.createElement('span'),{id:'directory-heading-dots',className:'discovery-dots',textContent:'.'.repeat(1+(directoryDot%3))}));
   }else if(directoryStatus==='failed'){
@@ -950,7 +960,7 @@ async function pollDirectoryAnalysis(){
 }
 setInterval(()=>{
   directoryDot=(directoryDot+1)%3;
-  for(const id of ['directory-dots','directory-heading-dots']){
+  for(const id of ['directory-dots','directory-heading-dots','directory-total-dots']){
     const dots=$(id);if(dots)dots.textContent='.'.repeat(directoryDot+1);
   }
 },500);
