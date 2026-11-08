@@ -493,10 +493,11 @@ class Handler(BaseHTTPRequestHandler):
                     search = q.get('search',[''])[0][:200]
                     root = q.get('root',[''])[0]
                     sort = q.get('sort',['wasted'])[0]
+                    order = q.get('order',['desc'])[0]
                     c = connect(DB, readonly=True)
                     try:
                         self.respond(list_scan_duplicate_groups(c, scan_id, data, limit,
-                                                               offset, search, root, sort))
+                                                               offset, search, root, sort, order))
                     finally:
                         c.close()
                 else:
