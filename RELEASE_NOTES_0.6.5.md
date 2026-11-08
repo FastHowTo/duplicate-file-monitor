@@ -30,14 +30,3 @@ Do not remove the existing /data bind mount or use `down -v`. Prometheus, MQTT, 
 New compressed duplicate group snapshots add SQLite storage on every successful scan. The amount depends on duplicate-group membership and path lengths; frequent scans of very large inventories will grow /data over time. This is necessary to preserve exact historical duplicate paths without relying on a mutable current inventory. Archive search across many compressed groups can take longer than an unfiltered page.
 
 Legacy reports can recover only data actually stored at the original scan time. DFM cannot prove old warnings were absent, rebuild missing historical logical sizes, or recover exact file paths for scans performed before v0.6.5.
-
-## Acceptance tests
-
-1. Verify green Completed, amber Completed with X warnings, red Failed and gray Cancelled styling in Scan Progress.
-2. In Scan History, click status text to open a report; ensure old per-row report buttons are gone.
-3. Click a pre-v0.6.4 history row: reconstructed report shows old values, missing fields as unavailable; reopen it later and confirm no values changed.
-4. Full Scan a test volume with known duplicates, then Quick Scan without changes. The Quick report must list previously known duplicate paths.
-5. Scoped Scan one volume with matching files on another volume: report includes full paths and labels which paths were scanned or outside scan scope.
-6. Change a file and scan again, then reopen the older report: archived duplicate membership and paths must remain unchanged.
-7. Test search, volume filter, sort and pagination on archive groups.
-8. Confirm unchanged global Duplicate Files dashboard, Home Assistant MQTT and Prometheus metrics.

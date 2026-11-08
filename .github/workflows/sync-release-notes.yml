@@ -1,0 +1,30 @@
+name: Synchronize published release notes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'RELEASE_NOTES_*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  synchronize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update matching published releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for notes in RELEASE_NOTES_*.md; do
+            version="${notes#RELEASE_NOTES_}"
+            version="${version%.md}"
+            if gh release view "v${version}" >/dev/null 2>&1; then
+              gh release edit "v${version}" --notes-file "$notes"
+              echo "Updated v${version}"
+            fi
+          done

@@ -40,11 +40,10 @@ Recoverable inaccessible directories and files being modified during hashing are
 - Fix SQLite scratch-directory initialization for large queries in read-only containers.
 - Show directory-enumeration activity and current path while scanning.
 - Reject state-changing cross-origin and non-JSON requests; protect APIs against CSRF.
-- Add developer dependencies and CI checks.
 - Log warnings for deprecated scheduling environment variables.
 
 ### Privacy and storage
-This public release contains only source code, tests, generic examples and documentation. Production SQLite files, MQTT credentials, local Compose files, NAS paths, network addresses and secrets are **not** included. Source volumes are still read-only; DFM does not delete, move, rename, hardlink or modify files.
+This public release contains only source code, generic examples and documentation. Production SQLite files, MQTT credentials, local Compose files, NAS paths, network addresses and secrets are **not** included. Source volumes are still read-only; DFM does not delete, move, rename, hardlink or modify files.
 
 ### Known limits
 A scan with inaccessible content may retain previously verified inventory that could not be rechecked; its report identifies the affected paths. Never treat reported reclaimable storage as proof of actual deletions. Historical report JSON records are stored in the existing SQLite data volume and must be included in backups.

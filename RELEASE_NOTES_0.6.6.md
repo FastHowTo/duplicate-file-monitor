@@ -11,9 +11,9 @@ This release consolidates the remaining findings from GitHub issues #1–#10 and
 - **Real favicon:** A small SVG favicon loads on the dashboard and login page. Both `/favicon.svg` and legacy `/favicon.ico` requests resolve successfully without requiring an administrator session.
 - **Permissions and environment docs:** Explain the container's default UID/GID `10001:100`, optional Compose `user:` override, writable `/data`, read-only NAS mounts, environment variables and obsolete scheduling variables.
 - **Update-check privacy:** README clarifies that GitHub release checking happens in the user's browser every six hours; the DFM server does not check GitHub for updates.
-- **Version consistency:** Automated tests assert that `app/version.py`, dashboard JS, README and Compose example all match and a corresponding release-note file exists.
+- **Version consistency:** Version identifiers are aligned across application, dashboard, documentation and Compose example.
 
-Previously completed fixes covered in the original issues were retained and regression-tested: #1 unreadable directories, #2 unreadable/changing files, #4 test dependencies, #6 CSRF and login security, #10 SQLite scratch handling. Issue #8's startup warning for obsolete schedule variables was already present.
+Previously completed fixes covered in the original issues were retained: #1 unreadable directories, #2 unreadable/changing files, #4 test dependencies, #6 CSRF and login security, #10 SQLite scratch handling. Issue #8's startup warning for obsolete schedule variables was already present.
 
 ## Upgrade
 
@@ -27,14 +27,3 @@ sudo docker compose logs --tail=100 duplicate-file-monitor
 ```
 
 **Do not** use `docker compose down -v` or replace the existing data volume. HTTPS through NPMplus is still recommended with `DFM_COOKIE_SECURE=true`; administrator credentials remain unchanged.
-
-## Tests
-
-1. Open a Scan History status hyperlink. Click a dark area outside the report: the report closes. Reopen and click inside, use filters and pagination, then press Escape: the report closes and focus returns to the status link. Close button still works.
-2. Verify the login and dashboard browser tabs show the SVG favicon, including an incognito login view. `GET /favicon.svg` should return HTTP 200 with `Content-Type: image/svg+xml`; `/favicon.ico` redirects to it.
-3. On a disposable test volume, verify `SCAN_IGNORE` patterns skip matching paths without warnings, preserving previously indexed ignored files. Remove the test pattern after testing.
-4. For non-CIFS mounts, set a correct `REQUIRE_MOUNT_TYPES` list and run a test Full Scan. Temporarily specify the wrong type and verify the scan fails safely without publishing inventory; restore the valid type afterward. Do not intentionally unmount NAS shares while scanning.
-5. For existing CIFS volumes, leave `REQUIRE_CIFS_MOUNTS=true` if already configured and verify it still validates; `REQUIRE_MOUNT_TYPES` is optional.
-6. For directory-heavy filesystems, check the dashboard directory counter/current path and `sudo docker compose logs -f duplicate-file-monitor` for heartbeat messages about every 45 seconds.
-7. Check full/quick scans, warnings, historical reports, exact archived duplicate paths, per-volume figures, Home Assistant MQTT and Prometheus/Grafana. Verify login, logout and CSRF protections remain intact.
-8. Confirm the container still runs non-root and can read the mounted test paths and write its private /data volume. Only change Compose `user:` if a permissions mismatch actually requires it.

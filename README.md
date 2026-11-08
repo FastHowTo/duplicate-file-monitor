@@ -79,18 +79,6 @@ Schedule intervals and MQTT broker settings are configured in the DFM dashboard,
 
 **Enumerating directory-heavy trees:** The dashboard reports directories visited and the current directory, and Docker logs record an enumeration heartbeat about every 45 seconds. Discovery prefers diving into subdirectories while distributing workers across selected volumes, helping expose files earlier in deeply nested trees.
 
-## Testing
-
-```sh
-python -m pip install -r requirements.txt -r requirements-dev.txt
-python -m playwright install chromium
-python -m pytest -q tests
-```
-
-## Release checklist
-
-Update and validate the source version in `app/version.py`, the browser's `LOADED_UI_VERSION`, the README header/image example, and the Compose example. The regression suite tests that these all match and that the matching release notes exist. Run Python, JavaScript, browser and Docker build checks **before** pushing a release branch. A merge to `main` triggers publication only after all tests pass.
-
 ## License
 
 Free noncommercial use under [PolyForm Noncommercial 1.0.0](LICENSE.md). Commercial deployment requires a separate license; see [Commercial Licensing](COMMERCIAL.md) or email **jeff@fasthowtochannel.com**.

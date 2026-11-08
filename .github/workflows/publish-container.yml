@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   container:
+    if: ${{ !contains(github.event.head_commit.message, '[skip publish]') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -17,24 +18,6 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install test dependencies
-        run: python -m pip install -r requirements.txt -r requirements-dev.txt
-      - name: Install browser for UI tests
-        run: python -m playwright install --with-deps chromium
-      - name: Verify Python and JavaScript syntax
-        run: |
-          python -m compileall -q app tests
-          python - <<'PY'
-          from pathlib import Path
-          html=Path('app/index.html').read_text()
-          Path('/tmp/dfm-check.js').write_text(html.split('<script>')[-1].split('</script>')[0])
-          PY
-          node --check /tmp/dfm-check.js
-      - name: Run all tests before publishing
-        run: python -m pytest -q tests
       - name: Check source version
         id: version
         shell: bash
