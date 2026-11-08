@@ -1,7 +1,9 @@
 services:
   duplicate-file-monitor:
-    image: ghcr.io/fasthowto/duplicate-file-monitor:0.6.5
+    image: ghcr.io/fasthowto/duplicate-file-monitor:0.6.6
     container_name: duplicate-file-monitor
+    # Optional: match host read permissions; if changed, /data must be writable.
+    # user: "1000:1000"
     restart: unless-stopped
     ports:
       - "18080:8080"
@@ -9,6 +11,10 @@ services:
       DB_PATH: /data/inventory.sqlite3
       SCAN_ROOTS: /scan/example
       HTTP_PORT: "8080"
+      # Optional mount-safety validation; allow e.g. cifs,nfs,nfs4,zfs,xfs.
+      # REQUIRE_MOUNT_TYPES: "cifs,nfs,nfs4,zfs,xfs"
+      # Optional exclusions; existing indexed files are preserved, not deleted.
+      # SCAN_IGNORE: ".cache:@eaDir:#recycle:*.tmp"
     volumes:
       - dfm-data:/data
       # Change the left-hand side to an EXISTING mounted directory on your host.
