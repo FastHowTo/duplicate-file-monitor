@@ -1,6 +1,6 @@
 # Duplicate File Monitor (DFM)
 
-**Version 0.6.10.3** — A read-only, Docker-hosted duplicate-file and duplicate-directory inventory tool for network storage.
+**Version 0.6.10.4** — A read-only, Docker-hosted duplicate-file and duplicate-directory inventory tool for network storage.
 
 DFM inventories selected directories, identifies SHA-256-confirmed duplicate files, analyzes identical directory trees, and estimates redundant logical storage. **It never deletes, renames, moves, or alters source files.** Cleanup is a separate, manual administrator decision.
 
@@ -31,7 +31,7 @@ DFM inventories selected directories, identifies SHA-256-confirmed duplicate fil
 ## Install with Docker Compose
 
 1. Mount the storage you want to scan on the Docker host first.
-2. Copy `docker-compose.example.yml` to `docker-compose.yml`. The example uses the published image `ghcr.io/fasthowto/duplicate-file-monitor:0.6.10.3` (no local build required).
+2. Copy `docker-compose.example.yml` to `docker-compose.yml`. The example uses the published image `ghcr.io/fasthowto/duplicate-file-monitor:0.6.10.4` (no local build required).
 3. Change `/path/to/your/mounted/files` to the actual host mount path; add more **read-only** mounts and colon-delimited `SCAN_ROOTS` paths as needed.
 4. Start DFM:
 
@@ -39,7 +39,7 @@ DFM inventories selected directories, identifies SHA-256-confirmed duplicate fil
 sudo docker compose up -d
 ```
 
-**Authentication (mandatory since v0.6.4):** Add a private `DFM_SETUP_TOKEN` (at least 24 random characters, e.g. output of `openssl rand -hex 32`) to your existing Compose environment before upgrading. By default, login requires HTTPS so the Secure session cookie works. First visit: choose your username and a 12+-character password, and enter the setup token. For a trusted HTTP-only LAN installation set `DFM_COOKIE_SECURE: "false"` explicitly. A separate `DFM_METRICS_TOKEN` (at least 24 random characters) may be configured for Prometheus bearer-token scrapes. **Read [v0.6.10.3 release notes](RELEASE_NOTES_0.6.10.3.md) before upgrading**, particularly the data backup and WAL checkpoint behavior.
+**Authentication (mandatory since v0.6.4):** Add a private `DFM_SETUP_TOKEN` (at least 24 random characters, e.g. output of `openssl rand -hex 32`) to your existing Compose environment before upgrading. By default, login requires HTTPS so the Secure session cookie works. First visit: choose your username and a 12+-character password, and enter the setup token. For a trusted HTTP-only LAN installation set `DFM_COOKIE_SECURE: "false"` explicitly. A separate `DFM_METRICS_TOKEN` (at least 24 random characters) may be configured for Prometheus bearer-token scrapes. **Read [v0.6.10.4 release notes](RELEASE_NOTES_0.6.10.4.md) before upgrading**, particularly the data backup and WAL checkpoint behavior.
 
 The **user's browser**, not the DFM server, checks GitHub Releases every six hours for a newer published, non-prerelease version. This is a browser-only request to GitHub; an offline browser simply does not display an update notice. The server does not contact GitHub for update checks and never installs updates automatically.
 
