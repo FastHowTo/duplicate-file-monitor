@@ -12,6 +12,7 @@ import struct
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
+import re
 import sqlite3
 import zlib
 import stat
@@ -349,24 +350,70 @@ def metrics(groups):
             sum(k[0]*(len(v)-1) for k, v in groups.items()))
 
 
-def validate_cifs_mounts(roots):
+def configured_mount_types():
+    """Allowed filesystem types for active scan roots; empty disables the check.
+
+    REQUIRE_MOUNT_TYPES overrides the legacy CIFS-only switch when populated.
+    'any' requires a real mountpoint, without restricting its filesystem type.
+    """
+    raw = os.getenv('REQUIRE_MOUNT_TYPES', '').strip()
+    if raw:
+        names = [part.strip().lower() for part in raw.split(',')]
+        if any(not re.fullmatch(r'[a-z0-9._+-]+', name) for name in names):
+            raise ValueError('REQUIRE_MOUNT_TYPES must be a comma-separated list of filesystem types')
+        return set(names)
+    if os.getenv('REQUIRE_CIFS_MOUNTS', 'false').strip().lower() in ('true', '1', 'yes', 'on'):
+        return {'cifs'}
+    return set()
+
+
+def _mount_filesystems():
     mounts = {}
     with open('/proc/self/mountinfo', encoding='utf-8') as f:
         for line in f:
             left, sep, right = line.rstrip('\n').partition(' - ')
-            if sep:
-                fields, info = left.split(), right.split()
-                if len(fields) > 4 and info:
-                    mountpoint = fields[4].replace('\\040', ' ').replace('\\011', '\t')
-                    mounts[os.path.realpath(mountpoint)] = info[0]
+            if not sep:
+                continue
+            fields, info = left.split(), right.split()
+            if len(fields) <= 4 or not info:
+                continue
+            # mountinfo escapes spaces, tabs, newlines and backslashes in paths.
+            mountpoint = re.sub(r'\\([0-7]{3})',
+                                lambda match: chr(int(match.group(1), 8)), fields[4])
+            mounts[os.path.realpath(mountpoint)] = info[0].lower()
+    return mounts
+
+
+def validate_mount_types(roots, allowed_types=None):
+    """Require each scan root to be an active container mount of an allowed type.
+
+    This checks the container's own /proc/self/mountinfo, not the host's. A
+    Docker read-only bind mount still exposes its underlying filesystem type.
+    """
+    allowed = set(configured_mount_types() if allowed_types is None else allowed_types)
+    if not allowed:
+        return {}
+    mounts = _mount_filesystems()
+    found = {}
     for root in roots:
-        if mounts.get(os.path.realpath(root)) != 'cifs':
-            raise RuntimeError(f'Scan root is not an active CIFS mount: {root}')
+        normalized = os.path.realpath(root)
+        filesystem = mounts.get(normalized)
+        if filesystem is None:
+            raise RuntimeError(f'Scan root is not an active mountpoint: {root}')
+        if 'any' not in allowed and filesystem not in allowed:
+            raise RuntimeError(f'Scan root filesystem {filesystem} is not allowed by REQUIRE_MOUNT_TYPES: {root}')
         try:
             with os.scandir(root) as entries:
                 next(entries, None)
         except OSError as exc:
             raise RuntimeError(f'Scan root is inaccessible: {root}: {exc}') from exc
+        found[normalized] = filesystem
+    return found
+
+
+def validate_cifs_mounts(roots):
+    """Backward-compatible CIFS-only checker for older callers."""
+    return validate_mount_types(roots, {'cifs'})
 
 
 RECOVERABLE_ERRNOS = {errno.EACCES,errno.EPERM,errno.ENOENT,errno.ENOTDIR,errno.EISDIR}
@@ -1068,8 +1115,7 @@ def _check_roots(rootlist, require_mounts):
             raise ValueError('Scan root missing: ' + root)
         if any(root.startswith(other + os.sep) for j, other in enumerate(rootlist) if j != i):
             raise ValueError('Overlapping scan roots')
-    if require_mounts:
-        validate_cifs_mounts(rootlist)
+    return validate_mount_types(rootlist, require_mounts) if require_mounts else {}
 
 
 
@@ -1160,7 +1206,7 @@ def _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics=None):
                     if root not in started and pending[root]:
                         started.add(root)
                         active[root] += 1
-                        return root, pending[root].popleft()
+                        return root, pending[root].pop()
                 # Then balance workers over the remaining directory trees.
                 available = [(active[root], (i-last_root-1)%len(rootlist),i,root)
                              for i,root in enumerate(rootlist) if pending[root]]
@@ -1168,7 +1214,7 @@ def _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics=None):
                     _,_,i,root = min(available)
                     last_root = i
                     active[root] += 1
-                    return root,pending[root].popleft()
+                    return root,pending[root].pop()
                 if not any(active.values()):
                     return None
                 condition.wait(timeout=0.15)
@@ -1251,11 +1297,30 @@ def _enumerate_parallel(c, rootlist, control, scan_id, discovery_metrics=None):
             _set_stage(c,scan_id,'enumerating',control)
 
     write_error = None
+    # A slow filesystem may yield no files for minutes. Emit a low-volume
+    # heartbeat even while the worker threads are still walking empty trees.
+    no_batch = object()
+    next_heartbeat = time.monotonic() + 45
     with ThreadPoolExecutor(max_workers=worker_count,
                             thread_name_prefix='dfm-discover') as executor:
         futures = [executor.submit(walk_worker) for _ in range(worker_count)]
         while finished < worker_count:
-            entry = written.get()
+            try:
+                entry = written.get(timeout=2)
+            except Empty:
+                entry = no_batch
+            now = time.monotonic()
+            if now >= next_heartbeat:
+                snapshot = control.snapshot()
+                print('Enumeration heartbeat: ' + json.dumps({
+                    'directories_visited': snapshot['directories_visited'],
+                    'files_discovered': snapshot['files_discovered'],
+                    'current_path': snapshot['current_path'],
+                    'volume': snapshot['volume'],
+                    'paused': snapshot['paused']}, ensure_ascii=False), flush=True)
+                next_heartbeat = now + 45
+            if entry is no_batch:
+                continue
             if entry is None:
                 finished += 1
                 continue
@@ -1311,7 +1376,7 @@ def _changes_since_published(c, root):
             'modified':int(modified),'possible_moves':int(potential)}
 
 
-def _remounted_cifs_roots(c, roots, require_mounts):
+def _remounted_cifs_roots(c, roots, cifs_roots):
     """Detect wholesale CIFS inode/device remapping, not isolated replacements.
 
     Reuse hashes based on path/size/mtime only when an entire CIFS mount
@@ -1319,10 +1384,12 @@ def _remounted_cifs_roots(c, roots, require_mounts):
     a stable mount is treated as a new file and rehashed. Never use the
     relaxed rule on ordinary local filesystems.
     """
-    if not require_mounts:
+    if not cifs_roots:
         return set()
     allowed = set()
     for root in roots:
+        if root not in cifs_roots:
+            continue
         row = c.execute('''SELECT COUNT(*) total,
             SUM(CASE WHEN (h.dev != w.dev OR h.inode != w.inode) THEN 1 ELSE 0 END) changed,
             SUM(CASE WHEN h.dev != w.dev THEN 1 ELSE 0 END) device_changed
@@ -1488,7 +1555,7 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
     start = time.time()
     c = connect(db)
     scan_id = None
-    require_mounts = os.getenv('REQUIRE_CIFS_MOUNTS', 'false').lower() == 'true'
+    require_mounts = configured_mount_types()
     rootlist = [os.path.realpath(root) for root in roots]
     preserved_roots = [os.path.realpath(root) for root in preserved_roots]
     # Quick Scan is incremental and must never clear the large persistent
@@ -1525,7 +1592,7 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
             # root. Historical successful scans are migrated as 'full'.
             if not quick_baseline_available(c, rootlist):
                 raise ValueError('Run a full scan first. Quick Scan needs a valid baseline for every active volume.')
-        _check_roots(rootlist, require_mounts)
+        checked_mount_types = _check_roots(rootlist, require_mounts)
         # Never silently count a removed/renamed configured volume as deleted files.
         allowed_roots = set(rootlist) | set(preserved_roots)
         absent = [r['root'] for r in c.execute('SELECT DISTINCT root FROM files')
@@ -1612,9 +1679,11 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
                                + '; '.join(errors[:5]))
         for item in skipped:
             _preserve_existing(c,item['root'],item['path'],item['category'] in ('excluded','inaccessible_directory'))
-        _save_warnings(c,scan_id,skipped,control)
+        # Intentional SCAN_IGNORE exclusions preserve baseline rows but are
+        # not scan errors; don't turn a clean scan amber for expected ignores.
+        _save_warnings(c,scan_id,[item for item in skipped if item['category'] != 'excluded'],control)
         if require_mounts:
-            validate_cifs_mounts(rootlist)
+            validate_mount_types(rootlist, require_mounts)
         # Do not reject legitimate deletions based on the magnitude of an
         # inventory reduction. Mount validation and enumeration errors are
         # independently checked above; file-count thresholds are not evidence
@@ -1622,7 +1691,8 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
         # Cached full-file hashes are algorithm-independent. Reuse a previous
         # identity or an established *whole-mount* CIFS remap, never a lone
         # changed inode within the same mount. Metadata mismatch always misses.
-        remounted = _remounted_cifs_roots(c, rootlist, require_mounts)
+        remounted = _remounted_cifs_roots(c, rootlist, {
+            root for root, filesystem in checked_mount_types.items() if filesystem == 'cifs'})
         control.set_progress(cache_remounted_roots=len(remounted))
         # Keep remount identity checks as one SQL expression (no 373k Python
         # callbacks), with a temporary list indexed by root.
@@ -1769,7 +1839,7 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
         _wal_checkpoint(c, 'PASSIVE')
         if require_mounts:
             control.finalizing('Verifying all source mounts')
-            validate_cifs_mounts(rootlist)
+            validate_mount_types(rootlist, require_mounts)
         control.finalizing('Calculating confirmed duplicate statistics')
         # Count exact matches using final SHA-256, not sample fingerprints.
         dupes, wasted = scan_scope_metrics(c,rootlist,bool(preserved_roots))

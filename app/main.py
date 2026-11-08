@@ -27,7 +27,7 @@ from schedule_engine import (get_schedules, save_schedules, update_run,
 from scanner import (ScanControl, archive_volume, connect, current_metrics,
                      effective_roots, read_meta, report, restore_volume, scan,
                      write_meta, initialize_database, FINGERPRINT_PROFILE,
-                     quick_baseline_available, read_scan_report, reconstruct_legacy_scan_report,
+                     quick_baseline_available, read_scan_report, configured_mount_types, reconstruct_legacy_scan_report,
                      list_scan_duplicate_groups)
 
 DB = os.getenv('DB_PATH', '/data/inventory.sqlite3')
@@ -41,6 +41,7 @@ startup_ready = threading.Event()
 startup_phase = 'Preparing database'
 startup_error = None
 UI = Path(__file__).with_name('index.html')
+FAVICON = Path(__file__).with_name('favicon.svg')
 LOGIN = Path(__file__).with_name('login.html')
 _volume_stats_cache = {'key':None,'metrics':{}}
 
@@ -395,6 +396,22 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         path = parsed.path
         try:
+            if path in ('/favicon.svg', '/favicon.ico'):
+                if path == '/favicon.ico':
+                    self.send_response(302)
+                    self.send_header('Location', '/favicon.svg')
+                    self.send_header('Cache-Control', 'public, max-age=86400')
+                    self.end_headers()
+                    return
+                body = FAVICON.read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/svg+xml; charset=utf-8')
+                self.send_header('Cache-Control', 'public, max-age=86400')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if path == '/health':
                 self.respond({'ok': startup_ready.is_set() and startup_error is None,
                               'phase': startup_phase, 'error': startup_error,
@@ -439,9 +456,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.render_html(LOGIN)
             elif path == '/api/auth/session':
                 self.respond({'username':session['username'],'csrf':session['csrf']})
-            elif path == '/favicon.ico':
-                self.send_response(204)
-                self.end_headers()
             elif path.startswith('/api/reports/'):
                 parts = path.split('/')
                 if len(parts) not in (4, 5) or (len(parts) == 5 and parts[4] != 'duplicates'):
@@ -774,7 +788,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.respond({'error':'Wait for the active scan to finish'},409)
                     return
                 try:
-                    required=os.getenv('REQUIRE_CIFS_MOUNTS','false').lower()=='true'
+                    required=bool(configured_mount_types())
                     if path.endswith('/add'):
                         result=add_volume(DB,ROOTS,data.get('root'),required)
                     elif path.endswith('/remove'):

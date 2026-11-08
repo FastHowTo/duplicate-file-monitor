@@ -10,7 +10,7 @@ import stat
 import time
 import uuid
 
-from scanner import connect, read_meta, write_meta, archive_volume, restore_volume, validate_cifs_mounts
+from scanner import connect, read_meta, write_meta, archive_volume, restore_volume, validate_mount_types, configured_mount_types
 
 
 def volume_config(db, defaults):
@@ -63,7 +63,7 @@ def save_volume_mode(db, defaults, enabled):
 def add_volume(db, defaults, root, require_mounts=False):
     root = normalize_root(root)
     if require_mounts:
-        validate_cifs_mounts([root])
+        validate_mount_types([root], configured_mount_types() or {'cifs'})
     config = volume_config(db, defaults)
     if root in config['roots']:
         raise ValueError('Volume is already configured')
@@ -119,7 +119,7 @@ def relocate_volume(db, defaults, old, new, require_mounts=False):
     if new == old:
         raise ValueError('New path must differ from old path')
     if require_mounts:
-        validate_cifs_mounts([new])
+        validate_mount_types([new], configured_mount_types() or {'cifs'})
     roots = [new if p == old else p for p in config['roots']]
     _ensure_nonoverlap(roots)
     c = connect(db, readonly=True)

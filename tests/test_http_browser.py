@@ -117,9 +117,21 @@ def test_authentication_and_csrf_block_unauthorized_api(running):
     assert report['scan_id']==c['id']
     assert report['totals']['file_count']==9
 
+def test_public_svg_favicon_before_login(running):
+    base, _, _ = running
+    import urllib.request
+    with urllib.request.urlopen(base + '/favicon.svg', timeout=5) as response:
+        assert response.status == 200
+        assert response.headers['Content-Type'].startswith('image/svg+xml')
+        assert b'<svg' in response.read()
+    with urllib.request.urlopen(base + '/favicon.ico', timeout=5) as response:
+        assert response.status == 200
+        assert response.geturl().endswith('/favicon.svg')
+
+
 def test_http_startup_readonly_status_and_schedules(running):
     base,roots,db=running
-    assert request(base,'/api/startup')[1]['version']=='0.6.5'
+    assert request(base,'/api/startup')[1]['version']=='0.6.6'
     status=request(base,'/api/status')[1]
     assert status['files']==9 and status['duplicates']==3
     assert status['quick_available']
