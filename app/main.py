@@ -226,8 +226,9 @@ def latest_status():
             [os.path.realpath(r) for r in data['active_roots']])
         data['quick_baseline_roots'] = [r for r in data['active_roots']
             if quick_baseline_available(c,[os.path.realpath(r)])]
-        last = c.execute("SELECT id FROM scans WHERE status='success' ORDER BY id DESC LIMIT 1").fetchone()
+        last = c.execute("SELECT id,ended FROM scans WHERE status='success' ORDER BY id DESC LIMIT 1").fetchone()
         data['published_scan_id'] = last['id'] if last else None
+        data['published_scan_ended'] = last['ended'] if last else None
         if last:
             duplicates, wasted = current_metrics(c)
             data['duplicates'] = duplicates
@@ -523,6 +524,7 @@ class Handler(BaseHTTPRequestHandler):
                     if status in ('pending','running','failed') or data['stale']:
                         data['items'] = []
                         data['returned'] = 0
+                        data['total_directory_roots'] = None
                     data['analysis_status'] = status
                     self.respond(data)
                 finally: c.close()
@@ -590,46 +592,72 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond({'version':VERSION,'active':active_control.snapshot() if active_control else None,
                               'last_scan':history})
             elif path == '/api/history':
-                root_filter = parse_qs(parsed.query).get('root',['all'])[0]
+                q = parse_qs(parsed.query)
+                root_filter = q.get('root',['all'])[0]
                 if root_filter != 'all' and root_filter not in configured()['roots']:
                     raise ValueError('Unknown history volume')
+                limit = min(max(int(q.get('limit',['25'])[0]),1),100)
+                page = max(int(q.get('page',['1'])[0]),1)
                 c = connect(DB, readonly=True)
                 try:
-                    rows = [dict(r) for r in c.execute('SELECT * FROM scans ORDER BY id DESC LIMIT ?',
-                                (50 if root_filter=='all' else 2000,))]
-                    # Fetch immutable volume snapshots in one query; no current
-                    # inventory metrics are substituted for historical figures.
+                    # Filter before paginating so every historical page remains
+                    # reachable. Scope includes All-Volumes scans, even when
+                    # viewing the history of one selected volume.
+                    where = ''
+                    args = []
+                    if root_filter != 'all':
+                        where = """
+                            WHERE EXISTS (
+                                SELECT 1 FROM volume_scans v
+                                WHERE v.scan_id = scans.id AND v.root = ?
+                            ) OR EXISTS (
+                                SELECT 1 FROM json_each(
+                                    CASE WHEN json_valid(scans.progress_json)
+                                         THEN json_extract(scans.progress_json,'$.scan_scope')
+                                         ELSE '[]' END
+                                ) AS scope WHERE scope.value = ?
+                            )"""
+                        args = [root_filter, root_filter]
+                    c.execute('BEGIN')
+                    total = c.execute('SELECT COUNT(*) FROM scans ' + where,args).fetchone()[0]
+                    total_pages = max(1,(total+limit-1)//limit)
+                    page = min(page,total_pages)
+                    offset = (page-1)*limit
+                    rows = [dict(r) for r in c.execute(
+                        'SELECT * FROM scans ' + where + ' ORDER BY id DESC LIMIT ? OFFSET ?',
+                        (*args,limit,offset))]
+                    # Fetch immutable volume snapshots for ONLY the current
+                    # page; no present-day totals enter historical records.
                     ids = [row['id'] for row in rows]
                     members = {}
+                    report_ids = set()
                     if ids:
                         placeholders = ','.join('?' for _ in ids)
                         for member in c.execute(
                                 'SELECT scan_id,root,file_count,duplicate_copies,wasted_bytes '
-                                'FROM volume_scans WHERE scan_id IN ('+placeholders+')', ids):
-                            members.setdefault(member['scan_id'], []).append(dict(member))
-                    report_ids=set()
-                    if ids:
+                                'FROM volume_scans WHERE scan_id IN ('+placeholders+')',ids):
+                            members.setdefault(member['scan_id'],[]).append(dict(member))
                         for record in c.execute(
-                            'SELECT scan_id FROM scan_reports WHERE scan_id IN ('+placeholders+')',ids):
+                                'SELECT scan_id FROM scan_reports WHERE scan_id IN ('+placeholders+')',ids):
                             report_ids.add(record['scan_id'])
                     for row in rows:
-                        row['has_report']=row['id'] in report_ids
-                        row['volumes'] = members.get(row['id'], [])
+                        row['has_report'] = row['id'] in report_ids
+                        row['volumes'] = members.get(row['id'],[])
                         try:
-                            raw=json.loads(row.get('progress_json') or '{}')
-                            row['scope']=raw.get('scan_scope')
-                        except (ValueError,TypeError):
-                            row['scope']=None
-                    if root_filter != 'all':
-                        rows = [r for r in rows if root_filter in (r.get('scope') or []) or any(v['root']==root_filter for v in r['volumes'])][:50]
+                            raw = json.loads(row.get('progress_json') or '{}')
+                            row['scope'] = raw.get('scan_scope')
+                        except (ValueError,TypeError,AttributeError):
+                            row['scope'] = None
                     if not lock.locked():
                         for row in rows:
                             if row['status'] == 'running':
                                 row['status'] = 'interrupted'
                                 row['error'] = row.get('error') or 'Scanner process exited before completion'
+                    c.commit()
                 finally:
                     c.close()
-                self.respond(rows)
+                self.respond({'items':rows,'total_records':total,'total_pages':total_pages,
+                              'page':page,'limit':limit})
             else:
                 self.send_error(404)
         except ValueError as exc:
