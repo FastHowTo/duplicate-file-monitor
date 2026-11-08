@@ -367,6 +367,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def render_html(self, path):
         body = path.read_bytes()
+        if path == UI:
+            # Use the running application's version, not a handwritten HTML
+            # constant, for release comparisons and deployment refreshes.
+            body = body.replace(b'__DFM_UI_VERSION__', VERSION.encode('ascii'))
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Cache-Control', 'no-store')
