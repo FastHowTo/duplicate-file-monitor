@@ -74,7 +74,7 @@ button.saving{background:#49647d}button.saved{background:#19764e}button.save-err
 input,select{border:1px solid #40536d;background:#0d1728;color:white;padding:9px 11px;border-radius:8px;font:inherit;max-width:100%}input[type=number]{width:130px}input[type=search]{width:min(430px,100%)}label{font-size:.93rem}
 #state{padding:7px 14px;background:#27364b;border-radius:99px;font-size:.9rem}.status-good{background:#184b3a!important;color:#a5efcc}.status-bad{background:#65313a!important;color:#ffb6b1}.status-warning{background:#73501a!important;color:#ffe0a0}.status-cancelled{background:#3e4654!important;color:#d0d6df}
 #message{min-height:1.3em;margin:4px 0}.error{color:#ff7777}.ok{color:#83d6b2}
-.metric-grid.global-summary-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.metric-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:15px}.stat{min-width:0;background:#1b2a3d;border:1px solid #2a3f58;border-radius:10px;padding:16px}
+.metric-grid.global-summary-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.metric-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:15px}.stat{min-width:0;background:#1b2a3d;border:1px solid #2a3f58;border-radius:10px;padding:16px}
 .stat-label{color:#b1c2d6;font-size:.87rem}.stat-value{font-size:clamp(1.4rem,2.5vw,2.05rem);font-weight:750;margin-top:8px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 #lifetime{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.lifetime-value{font-size:1.35rem;font-weight:700;font-variant-numeric:tabular-nums}
 .stage-line{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-top:10px}#stage-name{font-size:1.17rem;font-weight:750}#stage-pct{font-size:1.17rem;font-weight:750;font-variant-numeric:tabular-nums}
@@ -92,10 +92,22 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 .duplicate-name{font-weight:700;overflow-wrap:anywhere}.duplicate-info{font-size:.85rem;color:#9cb5d3;margin-top:5px}
 .page-controls{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px}.page-controls input{width:86px}.page-controls button{padding:8px 11px}.controls-left,.controls-right{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .page-info{font-size:.85rem;color:#a6b7ce}.settings-notice{font-size:.82rem;color:#a6b7ce;margin:10px 0}.settings-feedback{min-height:1.25rem;font-size:.86rem;margin-top:5px}
+@media(max-width:1200px) and (min-width:851px){.metric-grid.global-summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:850px){.metric-grid.global-summary-grid,.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:580px){.metric-grid.global-summary-grid{grid-template-columns:1fr}header{padding:16px}main{padding:14px}.panel{padding:14px}.metric-grid{grid-template-columns:1fr}.stat-value{font-size:1.8rem}th,td{padding:8px 5px}.page-controls{justify-content:center}}
 #directory-matches-panel th[data-dir-sort]{cursor:pointer;user-select:none;white-space:nowrap}
 #directory-matches-panel th[data-dir-sort]:hover,#directory-matches-panel th[data-dir-sort]:focus{color:#fff;outline-offset:-2px}
 #directory-matches-panel th .sort-arrow{display:inline-block;min-width:1em;text-align:center}
+.report-collapse{margin:0}
+.report-collapse>summary{display:flex;align-items:center;flex-wrap:wrap;column-gap:14px;row-gap:5px;list-style:none;cursor:pointer;color:#e8f0fb;min-height:30px}
+.report-collapse>summary::-webkit-details-marker{display:none}
+.report-collapse>summary::marker{content:''}
+.report-collapse>summary:focus-visible{outline:2px solid #8dbafd;outline-offset:5px;border-radius:4px}
+.report-collapse>summary:hover .report-title{color:#a9d2ff}
+.report-collapse>summary .report-title{margin:0;font-weight:700}
+.report-updated{font-size:.84rem;color:#a6b7ce;margin-left:auto}
+.report-caret{font-size:1.6rem;line-height:1;font-weight:500;color:#a9c9ed;display:inline-block;transition:transform .15s;transform-origin:center;min-width:25px;text-align:center}
+.report-collapse:not([open])>summary .report-caret{transform:rotate(180deg)}
+.report-content{margin-top:16px}
 </style></head><body class="starting">
 <header><div><h1>Duplicate File Monitor</h1><div class="muted tiny">Read-only file analysis · persistent results</div></div>
 <nav class="tabs" aria-label="Main navigation"><button class="selected" id="tab-dashboard">Dashboard</button><button id="tab-settings">Settings</button></nav>
@@ -108,7 +120,7 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 <p id="startup-note" class="tiny">Existing files and scan history will appear after initialization.</p>
 </section>
 <main id="dashboard"><div id="message" role="status" aria-live="polite"></div>
-<section class="panel" id="global-summary" aria-label="Global inventory summary"><div class="metric-grid global-summary-grid"><div class="stat"><div class="stat-label">Total space consumed</div><div class="stat-value" id="total-space-consumed">—</div></div><div class="stat"><div class="stat-label">Total wasted space</div><div class="stat-value" id="total-wasted-space">—</div></div><div class="stat"><div class="stat-label">Total duplicates</div><div class="stat-value" id="total-duplicates">—</div></div><div class="stat"><div class="stat-label">Lifetime space saved</div><div class="stat-value" id="saved">—</div></div></div></section>
+<section class="panel" id="global-summary" aria-label="Global inventory summary"><div class="metric-grid global-summary-grid"><div class="stat"><div class="stat-label">Total space consumed</div><div class="stat-value" id="total-space-consumed">—</div></div><div class="stat"><div class="stat-label">Total wasted space</div><div class="stat-value" id="total-wasted-space">—</div></div><div class="stat"><div class="stat-label">Total duplicates</div><div class="stat-value" id="total-duplicates">—</div></div><div class="stat"><div class="stat-label">Lifetime space saved</div><div class="stat-value" id="saved">—</div></div><div class="stat"><div class="stat-label" title="Individual directory locations listed in the confirmed duplicate-directory-tree report (up to 500 matching groups).">Duplicate root directories</div><div class="stat-value" id="total-duplicate-directory-roots">—</div></div></div></section>
 <section class="panel" aria-label="Scan progress">
 <div class="sectiontop"><h2>Scan progress <span id="scan-scope" class="muted tiny"></span></h2><div id="scan-time" class="tag">—</div></div>
 <div class="stage-line"><span><span id="stage-name">No scans yet</span><span class="spinner" id="finalizing-indicator" aria-hidden="true" hidden></span></span><span id="stage-pct"></span></div>
@@ -119,16 +131,22 @@ table{border-collapse:collapse;width:100%;font-size:.91rem}th,td{padding:10px;bo
 <div id="changes-summary" class="muted tiny" style="margin-top:14px" hidden></div><div id="current-report-link" class="tiny" style="margin-top:12px"></div>
 </section>
 <section class="panel" id="volume-summary-panel"><h2>Per-volume inventory</h2><p class="muted tiny">Current published inventory and last successful scan, not historical totals.</p><div class="scroll"><table><thead><tr><th>Volume</th><th class="num">Files</th><th class="num">Duplicates</th><th class="num">Wasted</th><th>Last scan</th></tr></thead><tbody id="volume-summary"></tbody></table></div></section>
-<section class="panel"><div class="sectiontop"><h2>Confirmed duplicate files <span class="muted tiny">(all volumes)</span></h2><div class="actions"><input type="search" id="filter" placeholder="Search filenames or full paths"><button class="secondary" id="search">Search</button></div></div>
+<section class="panel" id="duplicate-files-panel"><details class="report-collapse" id="duplicate-files-collapse">
+<summary><h2 class="report-title">Duplicate files</h2><span class="report-updated" id="duplicate-files-updated">Last updated —</span><span class="report-caret" aria-hidden="true">⌃</span></summary>
+<div class="report-content"><div class="sectiontop"><span class="muted tiny">Confirmed duplicate files · all volumes</span><div class="actions"><input type="search" id="filter" placeholder="Search filenames or full paths"><button class="secondary" id="search">Search</button></div></div>
 <div class="actions"><label for="sort">Sort by</label><select id="sort"><option value="wasted">Wasted space</option><option value="size">File size</option><option value="copies">Copy count</option><option value="filename">Filename</option></select>
 <select id="order" aria-label="Sort direction"><option value="desc">Descending</option><option value="asc">Ascending</option></select><label for="page-size">Groups per page</label><select id="page-size"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option><option value="250">250</option></select></div>
 <div id="results-count" class="page-info" style="margin-top:12px"></div>
 <div class="scroll"><table><thead><tr><th>Matching copies and full paths</th><th class="num">Copies</th><th class="num">Wasted</th></tr></thead><tbody id="duplicates"><tr><td colspan="3">No duplicates confirmed yet.</td></tr></tbody></table></div>
 <div class="page-controls"><div class="page-info" id="page-count">Page 1 of 1</div><div class="controls-right"><button class="secondary" id="first">First</button><button class="secondary" id="prev">Previous</button><label for="jump-page">Page</label><input type="number" min="1" id="jump-page" value="1"><button class="secondary" id="jump">Go</button><button class="secondary" id="next">Next</button><button class="secondary" id="last">Last</button></div></div>
-</section>
-<section class="panel" id="directory-matches-panel"><div class="sectiontop"><h2>Duplicate directory trees</h2></div><p class="muted tiny">Exact relative filename and subdirectory structure, confirmed matching SHA-256 contents. Highest matching directory trees only. This is a read-only report; directories containing unverified files are excluded.</p><div id="directory-summary" class="muted tiny" role="status">Run a scan to analyze the inventory.</div><div id="directory-table" class="scroll" hidden><table><thead><tr><th>Matching directory locations</th><th class="num" data-dir-sort="copies" tabindex="0" role="button">Copies <span class="sort-arrow"></span></th><th class="num" data-dir-sort="files_per_copy" tabindex="0" role="button">Files / copy <span class="sort-arrow"></span></th><th class="num" data-dir-sort="size_bytes_per_copy" tabindex="0" role="button">Logical size / copy <span class="sort-arrow"></span></th><th class="num" data-dir-sort="potential_savings_bytes" tabindex="0" role="button">Potential savings <span class="sort-arrow"></span></th></tr></thead><tbody id="directory-results"></tbody></table></div></section>
+</div></details></section>
+<section class="panel" id="directory-matches-panel"><details class="report-collapse" id="duplicate-directories-collapse">
+<summary><h2 class="report-title">Duplicate directories</h2><span class="report-updated" id="duplicate-directories-updated">Last updated —</span><span class="report-caret" aria-hidden="true">⌃</span></summary>
+<div class="report-content"><p class="muted tiny">Exact relative filename and subdirectory structure, confirmed matching SHA-256 contents. Highest matching directory trees only. This is a read-only report; directories containing unverified files are excluded.</p><div id="directory-summary" class="muted tiny" role="status">Run a scan to analyze the inventory.</div><div id="directory-table" class="scroll" hidden><table><thead><tr><th>Matching directory locations</th><th class="num" data-dir-sort="copies" tabindex="0" role="button">Copies <span class="sort-arrow"></span></th><th class="num" data-dir-sort="files_per_copy" tabindex="0" role="button">Files / copy <span class="sort-arrow"></span></th><th class="num" data-dir-sort="size_bytes_per_copy" tabindex="0" role="button">Logical size / copy <span class="sort-arrow"></span></th><th class="num" data-dir-sort="potential_savings_bytes" tabindex="0" role="button">Potential savings <span class="sort-arrow"></span></th></tr></thead><tbody id="directory-results"></tbody></table></div></div></details></section>
 
-<section class="panel"><div class="sectiontop"><h2>Scan history</h2><label>Volume <select id="history-root"><option value="all">All volumes</option></select></label></div><div class="scroll"><table><thead><tr><th>Started</th><th>Type</th><th>Status</th><th class="num">Files</th><th class="num">Duplicates</th><th class="num">Wasted</th><th class="num">Duration</th><th>Volume details / report</th></tr></thead><tbody id="history"><tr><td colspan="8">No scan history.</td></tr></tbody></table></div></section>
+<section class="panel" id="scan-history-panel"><details class="report-collapse" id="scan-history-collapse">
+<summary><h2 class="report-title">Scan history</h2><span class="report-updated" id="scan-history-updated">Last scan —</span><span class="report-caret" aria-hidden="true">⌃</span></summary>
+<div class="report-content"><div class="sectiontop"><span class="muted tiny">Saved scan records and reports</span><label>Volume <select id="history-root"><option value="all">All volumes</option></select></label></div><div class="scroll"><table><thead><tr><th>Started</th><th>Type</th><th>Status</th><th class="num">Files</th><th class="num">Duplicates</th><th class="num">Wasted</th><th class="num">Duration</th><th>Volume details / report</th></tr></thead><tbody id="history"><tr><td colspan="8">No scan history.</td></tr></tbody></table></div></div></details></section>
 <p id="disk-info" class="muted tiny"></p>
 <p class="muted tiny">Scanned source files are read-only. Duplicate File Monitor does not modify or remove original files.</p></main>
 <main id="settings-page" hidden>
@@ -428,6 +446,15 @@ function applyRows(items){const body=$('duplicates'),prior=new Map([...body.quer
 let directoryItems=[];
 let directorySortKey='potential_savings_bytes',directorySortOrder='desc';
 let directoryLoaded=false,directoryLoading=false,directoryStatus='idle',directoryDot=0;
+// Collapsed by default; remember which sections each browser expands.
+const collapsibleIds=['duplicate-files-collapse','duplicate-directories-collapse','scan-history-collapse'];
+for(const id of collapsibleIds){
+  const section=$(id);
+  try{section.open=localStorage.getItem('dfm-report-open:'+id)==='true'}catch{section.open=false}
+  section.addEventListener('toggle',()=>{
+    try{localStorage.setItem('dfm-report-open:'+id,String(section.open))}catch{}
+  });
+}
 try{const state=JSON.parse(localStorage.getItem('dfm-directory-sort')||'null');if(state&&['copies','files_per_copy','size_bytes_per_copy','potential_savings_bytes'].includes(state.key)&&['asc','desc'].includes(state.order)){directorySortKey=state.key;directorySortOrder=state.order}}catch{}
 function renderDirectoryMatches(){
   const body=$('directory-results');body.replaceChildren();
@@ -455,6 +482,16 @@ function displayDirectoryReport(data){
   directoryStatus=data.analysis_status||'idle';
   const summary=$('directory-summary');
   const busy=directoryStatus==='pending'||directoryStatus==='running'||data.stale;
+  const updated=$('duplicate-directories-updated');
+  const topCount=$('total-duplicate-directory-roots');
+  topCount.textContent=busy?'Analyzing…':directoryStatus==='failed'||!data.saved?'—':fmt(data.total_directory_roots);
+  if(busy&&directoryStatus!=='failed'){
+    updated.replaceChildren('Analyzing inventory ',Object.assign(document.createElement('span'),{id:'directory-heading-dots',className:'discovery-dots',textContent:'.'.repeat(1+(directoryDot%3))}));
+  }else if(directoryStatus==='failed'){
+    updated.textContent='Analysis unavailable';
+  }else{
+    updated.textContent=data.saved&&data.generated_at?'Last updated '+date(data.generated_at):'Last updated —';
+  }
   $('directory-table').hidden=busy||directoryStatus==='failed'||!data.saved;
   if(busy&&directoryStatus!=='failed'){
     directoryItems=[];renderDirectoryMatches();
@@ -475,7 +512,7 @@ function displayDirectoryReport(data){
   }
   directoryItems=data.items||[];renderDirectoryMatches();
   const when=data.generated_at?new Date(data.generated_at*1000).toLocaleString():'unknown time';
-  summary.textContent=fmt(data.returned)+' duplicate directory groups (up to 500 saved). Current inventory snapshot. '+
+  summary.textContent=fmt(data.total_directory_roots)+' matching directory locations in '+fmt(data.returned)+' duplicate directory groups (up to 500 saved). Current inventory snapshot. '+
     'Analyzed '+when+'. No source files were accessed.';
 }
 async function loadSavedDirectoryMatches(){
@@ -490,8 +527,10 @@ async function pollDirectoryAnalysis(){
   setTimeout(pollDirectoryAnalysis,directoryStatus==='pending'||directoryStatus==='running'?1500:8000);
 }
 setInterval(()=>{
-  const dots=$('directory-dots');
-  if(dots){directoryDot=(directoryDot+1)%3;dots.textContent='.'.repeat(directoryDot+1)}
+  directoryDot=(directoryDot+1)%3;
+  for(const id of ['directory-dots','directory-heading-dots']){
+    const dots=$(id);if(dots)dots.textContent='.'.repeat(directoryDot+1);
+  }
 },500);
 for(const th of document.querySelectorAll('#directory-matches-panel th[data-dir-sort]')){
   const sort=()=>{const key=th.dataset.dirSort;if(directorySortKey===key)directorySortOrder=directorySortOrder==='desc'?'asc':'desc';else{directorySortKey=key;directorySortOrder='desc'};
@@ -695,6 +734,8 @@ async function refresh(){if(stateBusy)return;stateBusy=true;try{
   $('total-space-consumed').textContent=s.total_file_size_bytes==null?'—':bytes(s.total_file_size_bytes);
   $('total-wasted-space').textContent=s.wasted==null?'—':bytes(s.wasted);
   $('total-duplicates').textContent=s.duplicates==null?'—':fmt(s.duplicates);
+  $('duplicate-files-updated').textContent='Last updated '+date(s.published_scan_ended);
+  $('scan-history-updated').textContent='Last scan '+date(s.started);
   if(reloadOnDeployment(s.version))return;
   backendReady=true;
   if(!directoryLoaded&&!directoryLoading)loadSavedDirectoryMatches();
