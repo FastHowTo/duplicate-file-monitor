@@ -206,10 +206,10 @@ async function api(path,options={}){const r=await fetch(path,{cache:'no-store',.
 let csrfToken=null;
 const post=(path,obj)=>api(path,{method:'POST',headers:{'Content-Type':'application/json','X-DFM-CSRF':csrfToken||''},body:JSON.stringify(obj||{})});
 async function loadAuth(){const data=await api('/api/auth/session');csrfToken=data.csrf;$('auth-username').value=data.username}
-$('logout').onclick=async()=>{try{await post('/api/auth/logout',{})}finally{location.replace('/login')}};
+$('logout').onclick=async()=>{try{await post('/api/auth/logout',{})}finally{clearReportCollapseSession();location.replace('/login')}};
 $('auth-change').onclick=async()=>{try{
  await post('/api/auth/change',{username:$('auth-username').value,current_password:$('auth-current').value,password:$('auth-new').value});
- location.replace('/login');
+ clearReportCollapseSession();location.replace('/login');
 }catch(e){$('auth-feedback').textContent=e.message}};
 let reportOpener=null, reportLastScanId=null;
 function closeReport(){
@@ -597,23 +597,34 @@ for(const th of document.querySelectorAll('#directory-matches-panel th[data-dir-
   th.addEventListener('click',sort);
   th.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();sort()}});
 }
-async function loadDuplicates(){if(dupeLoading)return;dupeLoading=true;try{const limit=Number($('page-size').value),offset=(currentPage-1)*limit;
-  const qs=new URLSearchParams({search:dupeQuery,limit:String(limit),offset:String(offset),sort:$('sort').value,order:$('order').value});
-  const data=await api('/api/duplicates?'+qs);totalPages=Math.max(1,data.total_pages);totalGroups=data.total_groups;
-  if(currentPage>totalPages){currentPage=totalPages;dupeLoading=false;return loadDuplicates()}
-  applyRows(data.items);const start=totalGroups?offset+1:0,end=offset+data.items.length;
-  $('results-count').textContent=`Showing groups ${fmt(start)}–${fmt(end)} of ${fmt(totalGroups)}${dupeQuery?' matching search':''}`;
-  $('page-count').textContent=`Page ${fmt(currentPage)} of ${fmt(totalPages)}`;
-  if(document.activeElement!==$('jump-page'))$('jump-page').value=String(currentPage);
-  for(const id of ['first','prev'])$(id).disabled=currentPage<=1;for(const id of ['next','last'])$(id).disabled=currentPage>=totalPages;
-  lastDupeRefresh=Date.now();loadedSource=data.source;loadedScanId=data.scan_id;
-}catch(e){message('Unable to load duplicates: '+e.message,true)}finally{dupeLoading=false}}
-function goPage(n){if(!Number.isInteger(n)||n<1||n>totalPages){message(`Page must be between 1 and ${totalPages}.`,true);return}currentPage=n;loadDuplicates()}
+async function loadDuplicates(){
+  if(dupeLoading)return;
+  dupeLoading=true;
+  try{
+    const limit=Number($('files-page-size').value),offset=(currentPage-1)*limit;
+    const qs=new URLSearchParams({search:dupeQuery,limit:String(limit),offset:String(offset),sort:$('sort').value,order:$('order').value});
+    const data=await api('/api/duplicates?'+qs);
+    totalPages=Math.max(1,data.total_pages);totalGroups=data.total_groups;
+    if(currentPage>totalPages){currentPage=totalPages;dupeLoading=false;return loadDuplicates()}
+    applyRows(data.items);
+    const start=totalGroups?offset+1:0,end=offset+data.items.length;
+    $('results-count').textContent=`Showing groups ${fmt(start)}–${fmt(end)} of ${fmt(totalGroups)}${dupeQuery?' matching search':''}`;
+    updatePager('files',currentPage,totalPages);
+    lastDupeRefresh=Date.now();loadedSource=data.source;loadedScanId=data.scan_id;
+  }catch(e){message('Unable to load duplicates: '+e.message,true)}
+  finally{dupeLoading=false}
+}
+function goFilePage(n){if(!Number.isInteger(n)||n<1||n>totalPages)return;currentPage=n;loadDuplicates()}
 function searchChanged(){dupeQuery=$('filter').value.trim();currentPage=1;loadDuplicates()}
-$('search').onclick=searchChanged;$('filter').onkeydown=e=>{if(e.key==='Enter')searchChanged()};
-$('sort').onchange=()=>{currentPage=1;loadDuplicates()};$('order').onchange=()=>{currentPage=1;loadDuplicates()};$('page-size').onchange=()=>{currentPage=1;loadDuplicates()};
-$('first').onclick=()=>goPage(1);$('prev').onclick=()=>goPage(currentPage-1);$('next').onclick=()=>goPage(currentPage+1);$('last').onclick=()=>goPage(totalPages);
-$('jump').onclick=()=>goPage(Number($('jump-page').value));$('jump-page').onkeydown=e=>{if(e.key==='Enter')goPage(Number(e.target.value))};
+$('search').onclick=searchChanged;
+$('filter').onkeydown=e=>{if(e.key==='Enter')searchChanged()};
+$('sort').onchange=()=>{currentPage=1;loadDuplicates()};
+$('order').onchange=()=>{currentPage=1;loadDuplicates()};
+$('files-page-size').onchange=()=>{currentPage=1;loadDuplicates()};
+bindPager('files',()=>currentPage,goFilePage,()=>totalPages);
+$('dirs-page-size').onchange=()=>{directoryPageSize=Number($('dirs-page-size').value);directoryPage=1;renderDirectoryMatches()};
+bindPager('dirs',()=>directoryPage,n=>{directoryPage=n;renderDirectoryMatches()},()=>Math.max(1,Math.ceil(directoryItems.length/directoryPageSize)));
+
 async function invoke(path,text){
   // Disable controls immediately while the request is in flight; only a
   // fresh server status can enable Start after scan cleanup has finished.
@@ -898,5 +909,5 @@ async function pollLiveProgress(){if(lastRunning){try{const s=await api('/api/pr
     }
   }}catch{}}
   setTimeout(pollLiveProgress,lastRunning?500:1500)}
-async function poll(){await refresh();setTimeout(poll,!backendReady?2000:lastRunning?5000:30000)}if(location.protocol==='http:'||location.protocol==='https:')loadAuth().catch(()=>location.replace('/login'));poll();pollLiveProgress();pollDirectoryAnalysis();
+async function poll(){await refresh();setTimeout(poll,!backendReady?2000:lastRunning?5000:30000)}if(location.protocol==='http:'||location.protocol==='https:')loadAuth().catch(()=>{clearReportCollapseSession();location.replace('/login')});poll();pollLiveProgress();pollDirectoryAnalysis();
 </script></body></html>
