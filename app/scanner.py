@@ -739,9 +739,8 @@ class ScanControl:
                 raise ScanCancelled('Scan cancelled before finalization')
             self._can_stop = False
             self._stop_reason = 'Inventory finalization cannot be interrupted safely'
-            # Finalizing starts when file-content work finishes, not when
-            # the noninterruptible publication transaction begins. Preserve
-            # that timestamp as the frozen scan-duration cutoff.
+            # Preserve a content-work cutoff as diagnostic metadata. The UI
+            # elapsed timer and final report continue through the database commit.
             cutoff = self.progress.get('duration_cutoff_at') or time.time()
             self.progress.update(stage='finalizing', lifecycle='finalizing',
                                  duration_cutoff_at=cutoff,
@@ -749,8 +748,8 @@ class ScanControl:
 
     def finalizing(self, step):
         with self._lock:
-            # The first Finalizing operation stops the scan clock. All later
-            # finalization, including the SQLite commit, is timed separately.
+            # Record when content work ended for diagnostics; the user-visible
+            # elapsed scan duration continues through finalization.
             self.progress.setdefault('duration_cutoff_at', time.time())
             self.progress.update(stage='finalizing', lifecycle='finalizing', finalizing_step=step)
 
@@ -1101,8 +1100,8 @@ def _checkpoint_after_completed_scan(keeper, scan_id):
 
 def _wal_checkpoint(c, mode='PASSIVE'):
     """Checkpoint between bounded read batches, never under a read cursor.
-    PASSIVE does not wait for transient API readers. The SQLite auto-checkpoint
-    also remains enabled; TRUNCATE is used only at stage boundaries.
+    PASSIVE does not wait for transient API readers. Scan-writer automatic
+    checkpoints are disabled; explicit stage and deferred checkpoints remain.
     """
     result = c.execute('PRAGMA wal_checkpoint(' + mode + ')').fetchone()
     # SQLite returns (busy, log_pages, checkpointed_pages). A busy reader can
@@ -2027,13 +2026,9 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
             publication_timings['history_write_seconds'] = round(time.monotonic()-phase, 3)
             commit_started = time.monotonic()
         publication_timings['commit_seconds'] = round(time.monotonic()-commit_started, 3)
-        # The success row and published data are in the same committed
-        # transaction. There is no second transaction that can leave the UI
-        # showing an earlier completed duration while the run is still active.
-        # The transaction's commit is expected to be short after delta writes.
-        # All critical database work is committed. Do not perform a large
-        # synchronous checkpoint after declaring success; WAL maintenance is
-        # handled between stages/at next startup.
+        # The inventory delta, archived membership and success status are
+        # committed atomically. A small follow-up timestamp correction includes
+        # commit latency in history; WAL checkpoint I/O is deferred separately.
         publication_timings['transaction_total_seconds'] = round(time.monotonic() - publication_started, 3)
         # The main transaction is now durable. This tiny follow-up update
         # records the actual post-commit completion time in both history and reports.
