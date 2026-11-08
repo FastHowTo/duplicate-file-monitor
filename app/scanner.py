@@ -1076,6 +1076,29 @@ def _work_pages(c, predicate, params=(), page_size=CANDIDATE_PAGE):
         yield rows
 
 
+def _checkpoint_after_completed_scan(keeper, scan_id):
+    """Checkpoint committed WAL off the scan's critical path.
+
+    The keeper holds an SQLite read transaction while the scan writer closes,
+    preventing SQLite's last-connection close from checkpointing synchronously.
+    The committed WAL is safe to recover after a process interruption.
+    """
+    started = time.monotonic()
+    try:
+        keeper.rollback()  # Release the temporary read snapshot before checkpointing.
+        result = keeper.execute('PRAGMA wal_checkpoint(PASSIVE)').fetchone()
+        print('Post-scan WAL checkpoint: ' + json.dumps({
+            'scan_id': scan_id, 'result': tuple(result) if result else None,
+            'seconds': round(time.monotonic()-started, 3)}), flush=True)
+    except sqlite3.Error as exc:
+        print('Post-scan WAL checkpoint deferred: ' + repr(exc), flush=True)
+    finally:
+        try:
+            keeper.close()
+        except sqlite3.Error as exc:
+            print('Post-scan WAL connection close: ' + repr(exc), flush=True)
+
+
 def _wal_checkpoint(c, mode='PASSIVE'):
     """Checkpoint between bounded read batches, never under a read cursor.
     PASSIVE does not wait for transient API readers. The SQLite auto-checkpoint
@@ -1567,7 +1590,12 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
         raise ValueError('Scan roots and preserved roots must be disjoint')
     if control is None:
         control = ScanControl(0)
+    checkpoint_keeper = None
     try:
+        # Preserve power-loss durability while preventing SQLite's automatic
+        # WAL checkpoint from delaying the scan's publication commit.
+        c.execute('PRAGMA synchronous=FULL')
+        c.execute('PRAGMA wal_autocheckpoint=0')
         # Record a run before checking the source mounts, so even a missing
         # share produces a visible, specific Failed result in Scan Progress.
         with c:
@@ -1909,7 +1937,9 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
             'ended':None,'duration_seconds':None,'mode':mode,'roots':rootlist,
             'volumes':report_volumes,'totals':total_row,'warnings':warning_rows,'error':''}
         control.finalizing('Archiving complete duplicate paths for scanned volumes')
+        snapshot_started = time.monotonic()
         snapshot_groups, snapshot_paths, snapshot_scoped = _stage_scan_duplicate_groups(c,rootlist,control)
+        snapshot_staging_seconds = round(time.monotonic()-snapshot_started, 3)
         report_data.update(duplicate_snapshot_available=True,
                            duplicate_group_count=snapshot_groups,
                            duplicate_path_count=snapshot_paths,
@@ -1921,7 +1951,7 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
         # This is the ONLY publication point. Cancellation/failure before here
         # cannot corrupt the previously committed inventory or accrue savings.
         publication_started = time.monotonic()
-        publication_timings = {}
+        publication_timings = {'archive_staging_seconds': snapshot_staging_seconds}
         with c:
             phase = time.monotonic()
             _apply_publication_delta(c)
@@ -1968,9 +1998,9 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
             publication_timings['cache_pruning_seconds'] = round(time.monotonic() - phase, 3)
             # Success status, end timestamp and last UI snapshot are written
             # in the same atomic transaction as the published inventory.
-            # The scan-duration clock was stopped when Finalizing began. The remaining commit time is
-            # explicitly excluded; avoid pretending it was included later.
-            ended = control.snapshot()['duration_cutoff_at']
+            # This is the pre-commit end-time approximation. Once committed,
+            # refresh both history and report with the real completion time.
+            ended = time.time()
             final_progress = control.snapshot()
             final_progress.update(stage='complete', lifecycle='complete',
                                   finalizing_step=None, ended_at=ended,
@@ -1981,9 +2011,12 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
             final_progress['warning_count']=warning_count
             report_data['ended']=ended
             report_data['duration_seconds']=round(ended-start,2)
+            phase = time.monotonic()
             c.execute('INSERT INTO scan_duplicate_groups(scan_id,group_no,size_bytes,sha256,scoped_copies,total_copies,wasted_bytes,paths_blob) '
                       'SELECT ?,group_no,size_bytes,sha256,scoped_copies,total_copies,wasted_bytes,paths_blob '
                       'FROM temp.scan_dup_stage', (scan_id,))
+            publication_timings['archive_insert_seconds'] = round(time.monotonic()-phase, 3)
+            phase = time.monotonic()
             c.execute('INSERT INTO scan_reports(scan_id,report_json) VALUES(?,?)',
                       (scan_id,json.dumps(report_data)))
             c.execute("""UPDATE scans SET ended=?,status='success',error='',files=?,
@@ -1991,6 +2024,9 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
                           WHERE id=?""",
                        (ended,count,dupes,wasted,lifetime,
                         json.dumps(final_progress),json.dumps(change_totals),warning_count,scan_id))
+            publication_timings['history_write_seconds'] = round(time.monotonic()-phase, 3)
+            commit_started = time.monotonic()
+        publication_timings['commit_seconds'] = round(time.monotonic()-commit_started, 3)
         # The success row and published data are in the same committed
         # transaction. There is no second transaction that can leave the UI
         # showing an earlier completed duration while the run is still active.
@@ -1999,10 +2035,41 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
         # synchronous checkpoint after declaring success; WAL maintenance is
         # handled between stages/at next startup.
         publication_timings['transaction_total_seconds'] = round(time.monotonic() - publication_started, 3)
+        # The main transaction is now durable. This tiny follow-up update
+        # records the actual post-commit completion time in both history and reports.
+        postcommit_started = time.monotonic()
+        ended = time.time()
+        report_data['ended'] = ended
+        report_data['duration_seconds'] = round(ended-start, 2)
+        final_progress['ended_at'] = ended
+        try:
+            with c:
+                c.execute('UPDATE scans SET ended=?,progress_json=? WHERE id=? AND status=?',
+                          (ended,json.dumps(final_progress),scan_id,'success'))
+                c.execute('UPDATE scan_reports SET report_json=? WHERE scan_id=?',
+                          (json.dumps(report_data),scan_id))
+        except sqlite3.Error as exc:
+            # Do not re-label an already committed success as failed if this
+            # optional clock correction encounters an isolated DB error.
+            c.rollback()
+            print('Unable to refresh commit-inclusive scan duration: '+repr(exc),flush=True)
+        publication_timings['completion_timestamp_seconds'] = round(time.monotonic()-postcommit_started, 3)
         publication_timings['volume_metrics_seconds'] = volume_metrics_seconds
         publication_timings['finalization_total_seconds'] = round(time.monotonic() - finalization_started, 3)
         print('Finalization timings: ' + json.dumps(publication_timings), flush=True)
         control.set_progress(**final_progress)
+        # A read transaction prevents writer-close from checkpointing the WAL
+        # synchronously. The checkpoint worker releases this read snapshot.
+        try:
+            checkpoint_keeper = sqlite3.connect(str(db),timeout=30,check_same_thread=False)
+            checkpoint_keeper.execute('PRAGMA wal_autocheckpoint=0')
+            checkpoint_keeper.execute('BEGIN')
+            checkpoint_keeper.execute('SELECT name FROM sqlite_master LIMIT 1').fetchone()
+        except sqlite3.Error as exc:
+            print('Unable to initialize deferred WAL checkpoint: '+repr(exc),flush=True)
+            if checkpoint_keeper is not None:
+                checkpoint_keeper.close()
+                checkpoint_keeper = None
         result = {'status':'success','warning_count':len(warning_rows),'files_scanned':count,'scan_scope':rootlist,
                   'scan_duplicates_count':dupes,'scan_wasted_space':wasted,
                   'current_duplicates_count':global_dupes,'current_wasted_space':global_wasted,
@@ -2054,6 +2121,17 @@ def scan(db, roots, control=None, mode='full', preserved_roots=()):
                 c.rollback()
         finally:
             c.close()
+            if checkpoint_keeper is not None:
+                if control.snapshot().get('stage') == 'complete':
+                    try:
+                        threading.Thread(target=_checkpoint_after_completed_scan,
+                                         args=(checkpoint_keeper,scan_id),
+                                         name='dfm-wal-checkpoint',daemon=True).start()
+                    except RuntimeError as exc:
+                        print('Unable to start deferred WAL checkpoint: '+repr(exc),flush=True)
+                        checkpoint_keeper.close()
+                else:
+                    checkpoint_keeper.close()
 
 
 def report(db, search='', limit=100, offset=0, live=False, sort='wasted',
